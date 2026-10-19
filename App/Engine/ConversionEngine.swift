@@ -10,6 +10,10 @@ struct RecentConversion: Codable, Identifiable, Equatable {
     var outputPaths: [String]
     var succeeded: Bool
     var date: Date
+    /// Files edited in place (Save and Replace): undo puts each backup back over its original.
+    var replaced: [ReplacedFile]? = nil
+
+    var isUndoable: Bool { succeeded && (!outputPaths.isEmpty || !(replaced ?? []).isEmpty) }
 }
 
 /// The headless conversion pipeline: every conversion, tool save, merge, split and export the
@@ -22,6 +26,8 @@ struct ConversionEngine {
     var temporaryDirectory: String = FileManager.default.temporaryDirectory.standardizedFileURL.path
     var downloadsDirectory: String = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
         ?? (NSHomeDirectory() + "/Downloads")
+    /// Where Save and Replace keeps originals until they're undone or fall off the Recent list.
+    var undoDirectory: URL = ReplaceStore.defaultDirectory
 
     init(settings: PithSettings, tools: ToolAvailability) {
         self.settings = settings
@@ -268,6 +274,22 @@ struct ConversionEngine {
         try saveImage(composed, source: source, suffix: " Background", fileExtension: "png", uti: FileTypes.png.uti, quality: nil)
     }
 
+    // MARK: Save and Replace
+
+    /// Writes `image` over `source` in its own format, keeping a backup for undo.
+    func replaceOriginal(_ image: CGImage, source: URL) throws -> ReplacedFile {
+        let type = FileTypes.matching(path: source.path) ?? FileTypes.png
+        return try ReplaceStore.replace(source, with: image, quality: quality(for: type), directory: undoDirectory)
+    }
+
+    func cropReplacing(_ image: CGImage, source: URL, to rect: PixelRect) throws -> ReplacedFile {
+        try replaceOriginal(try ImageComposer.crop(image, to: rect), source: source)
+    }
+
+    func stripMetadataReplacing(_ source: URL) throws -> ReplacedFile {
+        try replaceOriginal(try ImageIOBridge.loadOriented(source), source: source)
+    }
+
     // MARK: Helpers
 
     func location(for source: URL) -> OutputLocation {
@@ -296,37 +318,75 @@ struct ConversionEngine {
     }
 }
 
-/// Recent conversions and undo. Undo moves the newest successful entry's outputs to the Trash.
+/// Recent conversions and undo. Undo moves the newest successful entry's outputs to the Trash
+/// and restores any originals it replaced in place.
 enum RecentLog {
     static let limit = 12
 
-    static func record(_ item: RecentConversion, into recent: inout [RecentConversion]) {
+    struct UndoOutcome: Equatable {
+        var trashed = 0
+        var restored: [String] = []
+        var total: Int { trashed + restored.count }
+    }
+
+    static func record(
+        _ item: RecentConversion,
+        into recent: inout [RecentConversion],
+        discardBackup: (ReplacedFile) -> Void = ReplaceStore.discard
+    ) {
         recent.insert(item, at: 0)
+        // Entries that fall off the list can no longer be undone, so their backups go too.
+        for dropped in recent.dropFirst(limit) {
+            (dropped.replaced ?? []).forEach(discardBackup)
+        }
         recent = Array(recent.prefix(limit))
     }
 
     static func canUndo(_ recent: [RecentConversion]) -> Bool {
-        recent.contains { $0.succeeded && !$0.outputPaths.isEmpty }
+        recent.contains { $0.isUndoable }
     }
 
-    /// Returns how many outputs went to the Trash, or nil when there's nothing to undo.
+    /// The entry the next undo acts on.
+    static func nextUndoable(_ recent: [RecentConversion]) -> RecentConversion? {
+        recent.first { $0.isUndoable }
+    }
+
+    /// Returns how many outputs went to the Trash plus originals restored, or nil when there's nothing to undo.
     static func undoLast(
         _ recent: inout [RecentConversion],
         trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
     ) -> Int? {
-        guard let index = recent.firstIndex(where: { $0.succeeded && !$0.outputPaths.isEmpty }) else { return nil }
+        undo(&recent, trash: trash)?.total
+    }
+
+    static func undo(
+        _ recent: inout [RecentConversion],
+        trash: (URL) throws -> Void = { try FileManager.default.trashItem(at: $0, resultingItemURL: nil) }
+    ) -> UndoOutcome? {
+        guard let index = recent.firstIndex(where: { $0.isUndoable }) else { return nil }
         let item = recent[index]
-        var trashed = 0
+        var outcome = UndoOutcome()
         for path in item.outputPaths where FileManager.default.fileExists(atPath: path) {
             if (try? trash(URL(fileURLWithPath: path))) != nil {
-                trashed += 1
+                outcome.trashed += 1
+            }
+        }
+        for replaced in item.replaced ?? [] {
+            if (try? ReplaceStore.restore(replaced)) != nil {
+                outcome.restored.append(URL(fileURLWithPath: replaced.original).lastPathComponent)
             }
         }
         recent.remove(at: index)
-        return trashed
+        return outcome
     }
 
     static func message(trashed: Int) -> String {
         trashed == 1 ? "Moved 1 file to the Trash" : "Moved \(trashed) files to the Trash"
+    }
+
+    static func message(_ outcome: UndoOutcome) -> String {
+        if outcome.restored.isEmpty { return message(trashed: outcome.trashed) }
+        let restored = outcome.restored.count == 1 ? "Restored \(outcome.restored[0])" : "Restored \(outcome.restored.count) originals"
+        return outcome.trashed == 0 ? restored : restored + ", " + message(trashed: outcome.trashed).lowercased()
     }
 }

@@ -304,4 +304,26 @@ final class ToolTests: XCTestCase {
         expect(first?.width == 1224 && first?.height == 1584, "page 1 at 144 DPI is \(first?.width ?? 0)×\(first?.height ?? 0)")
         expect(second?.width == 1584 && second?.height == 1224, "landscape page is \(second?.width ?? 0)×\(second?.height ?? 0)")
     }
+
+    func testAddBackgroundCornersAndShadowAreVisible() throws {
+        let image = CGContext(data: nil, width: 400, height: 300, bitsPerComponent: 8, bytesPerRow: 0,
+                              space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        image.setFillColor(CGColor(red: 0.1, green: 0.4, blue: 0.9, alpha: 1))
+        image.fill(CGRect(x: 0, y: 0, width: 400, height: 300))
+        let source = image.makeImage()!
+        let white = BackgroundFill.solid(1, 1, 1)
+        let flat = ImageComposer.addBackground(image: source, padding: 100, cornerRadius: 0, shadowRadius: 0, background: white, aspect: .auto)!
+        let rounded = ImageComposer.addBackground(image: source, padding: 100, cornerRadius: 60, shadowRadius: 0, background: white, aspect: .auto)!
+        let shadowed = ImageComposer.addBackground(image: source, padding: 100, cornerRadius: 0, shadowRadius: 40, background: white, aspect: .auto)!
+        // Image occupies x 100..<500, y 100..<400 (top-left). Its top-left corner pixel:
+        let corner = CGRect(x: 101, y: 101, width: 4, height: 4)
+        let blueInCorner = { (img: CGImage) in Validate.countPixels(img, in: corner) { $0.b > 200 && $0.r < 80 } }
+        XCTAssertEqual(blueInCorner(flat), 16, "square corner should be image")
+        XCTAssertEqual(blueInCorner(rounded), 0, "rounded corner should show background")
+        // Just below the image (shadow falls downward): darker than pure white only when shadowed.
+        let below = CGRect(x: 280, y: 410, width: 40, height: 10)
+        let grey = { (img: CGImage) in Validate.countPixels(img, in: below) { $0.r < 235 } }
+        XCTAssertEqual(grey(flat), 0)
+        XCTAssertGreaterThan(grey(shadowed), 300, "shadow should darken the area under the card")
+    }
 }

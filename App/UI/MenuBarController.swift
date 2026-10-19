@@ -83,9 +83,14 @@ final class MenuBarController: NSObject, NSMenuDelegate {
         let undo = NSMenuItem(title: "Undo Last Conversion", action: #selector(undoLast), keyEquivalent: "z")
         undo.keyEquivalentModifierMask = [.control, .option, .command]
         undo.target = self
-        undo.isEnabled = recent.contains { $0.succeeded && !$0.outputPaths.isEmpty }
+        undo.isEnabled = RecentLog.canUndo(recent)
+        undo.toolTip = "Or press ⌘Z in Finder within 5 seconds of a conversion or replace."
         menu.autoenablesItems = false
         menu.addItem(undo)
+        let hint = NSMenuItem(title: "Plain ⌘Z works in Finder for 5 s after a conversion", action: nil, keyEquivalent: "")
+        hint.isEnabled = false
+        hint.indentationLevel = 1
+        menu.addItem(hint)
         let recentItem = NSMenuItem(title: "Recent conversions", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)

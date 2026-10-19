@@ -7,6 +7,8 @@ struct AnnotateEditor: View {
     var image: CGImage
     var onClose: () -> Void
     var onApply: (CGImage) -> Void
+    var onReplace: ((CGImage) -> Void)? = nil
+    var replaceBlocker: String? = nil
 
     @State private var marks: [AnnotationMark] = []
     @State private var draft: [CGPoint] = []
@@ -24,7 +26,8 @@ struct AnnotateEditor: View {
     ]
 
     var body: some View {
-        EditorChrome(title: "Annotate", primaryTitle: "Save", onClose: onClose, onReset: { marks = []; draft = [] }, onPrimary: apply) {
+        EditorChrome(title: "Annotate", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: { marks = []; draft = [] }, onPrimary: { apply(onApply) },
+                     replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
             VStack(spacing: 12) {
                 canvas
                     .padding(.horizontal, 18)
@@ -92,9 +95,9 @@ struct AnnotateEditor: View {
         return AnnotationRenderer.render(base: image, marks: live) ?? image
     }
 
-    private func apply() {
+    private func apply(_ handler: (CGImage) -> Void) {
         if let image = AnnotationRenderer.render(base: image, marks: marks) {
-            onApply(image)
+            handler(image)
         }
     }
 
@@ -133,11 +136,14 @@ struct RedactEditor: View {
     var image: CGImage
     var onClose: () -> Void
     var onApply: (CGImage) -> Void
+    var onReplace: ((CGImage) -> Void)? = nil
+    var replaceBlocker: String? = nil
     @State private var boxes: [CGRect] = []
     @State private var draft: CGRect?
 
     var body: some View {
-        EditorChrome(title: "Redact", primaryTitle: "Save", onClose: onClose, onReset: { boxes = []; draft = nil }, onPrimary: apply) {
+        EditorChrome(title: "Redact", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: { boxes = []; draft = nil }, onPrimary: { apply(onApply) },
+                     replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
             GeometryReader { geo in
                 let fitted = fit(geo.size)
                 ZStack {
@@ -166,8 +172,8 @@ struct RedactEditor: View {
         return AnnotationRenderer.redact(base: image, boxes: all) ?? image
     }
 
-    private func apply() {
-        if let image = AnnotationRenderer.redact(base: image, boxes: boxes) { onApply(image) }
+    private func apply(_ handler: (CGImage) -> Void) {
+        if let image = AnnotationRenderer.redact(base: image, boxes: boxes) { handler(image) }
     }
 
     private func fit(_ size: CGSize) -> CGRect {
@@ -193,9 +199,12 @@ struct MetadataEditor: View {
     var rows: [(String, String)]
     var onClose: () -> Void
     var onStrip: () -> Void
+    var onStripReplacing: (() -> Void)? = nil
+    var replaceBlocker: String? = nil
 
     var body: some View {
-        EditorChrome(title: "Metadata", primaryTitle: "Strip Metadata", onClose: onClose, onReset: {}, onPrimary: onStrip) {
+        EditorChrome(title: "Metadata", primaryTitle: onStripReplacing == nil ? "Strip Metadata" : "Save as New", onClose: onClose, onReset: {}, onPrimary: onStrip,
+                     replace: onStripReplacing.map { ReplaceButton(blocker: replaceBlocker, action: $0) }) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(source.lastPathComponent)
                     .font(.system(size: 12, weight: .medium))
@@ -235,13 +244,16 @@ struct AdjustEditor: View {
     var image: CGImage
     var onClose: () -> Void
     var onApply: (CGImage) -> Void
+    var onReplace: ((CGImage) -> Void)? = nil
+    var replaceBlocker: String? = nil
     @State private var brightness: Double = 0
     @State private var contrast: Double = 1
     @State private var saturation: Double = 1
     @State private var sharpness: Double = 0
 
     var body: some View {
-        EditorChrome(title: "Edit", primaryTitle: "Save", onClose: onClose, onReset: reset, onPrimary: apply) {
+        EditorChrome(title: "Edit", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: reset, onPrimary: { apply(onApply) },
+                     replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
             VStack(spacing: 14) {
                 Image(decorative: preview, scale: 1)
                     .resizable()
@@ -272,7 +284,7 @@ struct AdjustEditor: View {
         sharpness = 0
     }
 
-    private func apply() { if let image = rendered() { onApply(image) } }
+    private func apply(_ handler: (CGImage) -> Void) { if let image = rendered() { handler(image) } }
 }
 
 struct CompressEditor: View {

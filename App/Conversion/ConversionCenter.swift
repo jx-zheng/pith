@@ -45,12 +45,15 @@ final class ConversionCenter: ObservableObject {
         jobs.map(\.id).forEach(cancel)
     }
 
-    func convert(urls: [URL], offer: ConversionOffer, anchor: CGPoint) {
+    /// - Parameters:
+    ///   - anchor: where the HUD appears.
+    ///   - drop: where the user let go of a drag; nil (click mode) puts outputs next to each source's icon.
+    func convert(urls: [URL], offer: ConversionOffer, anchor: CGPoint, drop: CGPoint?) {
         guard offer.isEnabled else { return }
         let job = startJob(title: "Converting to \(offer.label)", subtitle: subtitle(for: urls), anchor: anchor)
         let engine = self.engine
         Task { @MainActor in
-            await self.runBatch(urls: urls, job: job) { url, index, count in
+            await self.runBatch(urls: urls, job: job, drop: drop) { url, index, count in
                 self.update(job: job, title: count > 1 ? "Converting \(index) of \(count) to \(offer.label)" : "Converting to \(offer.label)", subtitle: url.lastPathComponent, progress: Double(index - 1) / Double(count))
                 return try await engine.convert(url, offer: offer, runner: self.makeRunner(job)) { fraction in
                     let overall = (Double(index - 1) + fraction) / Double(count)
@@ -60,7 +63,7 @@ final class ConversionCenter: ObservableObject {
         }
     }
 
-    func runTool(_ tool: ToolID, urls: [URL]) {
+    func runTool(_ tool: ToolID, urls: [URL], drop: CGPoint?) {
         switch tool {
         case .compress:
             presentEditor?(.compress(urls))
@@ -79,19 +82,34 @@ final class ConversionCenter: ObservableObject {
         case .trim:
             presentEditor?(.trim(urls))
         case .mergePDF:
-            merge(urls)
+            merge(urls, drop: drop)
         case .splitPDF:
-            if let url = urls.first { split(url) }
+            if let url = urls.first { split(url, drop: drop) }
         }
     }
 
-    /// Records an editor save (crop, annotate, …) so it shows in Recent and can be undone.
+    /// Records an editor save (crop, annotate, …) so it shows in Recent and can be undone,
+    /// and moves the new file's icon next to the source's. The editor window is wherever the
+    /// user left it, so neither it nor the mouse says anything about where the file belongs.
     @discardableResult
     func recordSaved(_ url: URL, source: URL) -> URL {
+        FinderPlacement.place([url], target: .besideSource(source))
         finishSuccess(title: "Saved \(url.lastPathComponent)", subtitle: source.lastPathComponent, paths: [url])
         return url
     }
 
+    /// Records a Save and Replace. Same name, same folder, so Finder keeps the icon where it was.
+    func recordReplaced(_ entry: ReplacedFile, source: URL) {
+        onMain {
+            let item = RecentConversion(id: UUID(), title: "Replaced \(source.lastPathComponent)", subtitle: "Edited in place",
+                                        outputPaths: [], succeeded: true, date: Date(), replaced: [entry])
+            RecentLog.record(item, into: &self.recent)
+            self.persistRecent()
+            Notifier.shared.post(title: item.title, body: item.subtitle, paths: [entry.original])
+        }
+    }
+
+    /// Video Compress and Trim run from an editor window; outputs go next to the source's icon.
     func exportVideo(source: URL, trim: TrimRange?, bitrate: Double?, anchor: CGPoint) {
         let title = trim == nil ? "Compressing" : "Trimming"
         let job = startJob(title: title, subtitle: source.lastPathComponent, anchor: anchor)
@@ -104,14 +122,15 @@ final class ConversionCenter: ObservableObject {
                         self.update(job: job, title: title, subtitle: source.lastPathComponent, progress: fraction)
                     }
                 }
-                self.finishJob(job, title: "Saved \(destination.lastPathComponent)", subtitle: source.lastPathComponent, paths: [destination], success: true)
+                self.finishJob(job, title: "Saved \(destination.lastPathComponent)", subtitle: source.lastPathComponent, paths: [destination], success: true,
+                               placements: [(.besideSource(source), [destination])])
             } catch {
                 self.finishJob(job, title: "Couldn't process \(source.lastPathComponent)", subtitle: error.localizedDescription, paths: [], success: false)
             }
         }
     }
 
-    private func merge(_ urls: [URL]) {
+    private func merge(_ urls: [URL], drop: CGPoint?) {
         let count = ConversionEngine.mergeCandidates(urls).count
         guard count >= 2 else { return }
         let job = startJob(title: "Merging into one PDF", subtitle: "\(count) files", anchor: NSEvent.mouseLocation)
@@ -119,36 +138,44 @@ final class ConversionCenter: ObservableObject {
         Task { @MainActor in
             do {
                 let outputs = try engine.merge(urls)
-                self.finishJob(job, title: "Merged \(count) files", subtitle: outputs.first?.lastPathComponent ?? "", paths: outputs, success: true)
+                let target = PlacementTarget.resolve(drop: drop, source: ConversionEngine.mergeCandidates(urls).first)
+                self.finishJob(job, title: "Merged \(count) files", subtitle: outputs.first?.lastPathComponent ?? "", paths: outputs, success: true,
+                               placements: target.map { [($0, outputs)] } ?? [])
             } catch {
                 self.finishJob(job, title: "Couldn't merge PDFs", subtitle: error.localizedDescription, paths: [], success: false)
             }
         }
     }
 
-    private func split(_ url: URL) {
+    private func split(_ url: URL, drop: CGPoint?) {
         let job = startJob(title: "Splitting PDF", subtitle: url.lastPathComponent, anchor: NSEvent.mouseLocation)
         let engine = self.engine
         Task { @MainActor in
             do {
                 let outputs = try engine.split(url)
-                self.finishJob(job, title: "Split into \(outputs.count) PDFs", subtitle: url.lastPathComponent, paths: outputs, success: true)
+                let target = PlacementTarget.resolve(drop: drop, source: url)!
+                self.finishJob(job, title: "Split into \(outputs.count) PDFs", subtitle: url.lastPathComponent, paths: outputs, success: true,
+                               placements: [(target, outputs)])
             } catch {
                 self.finishJob(job, title: "Couldn't split PDF", subtitle: error.localizedDescription, paths: [], success: false)
             }
         }
     }
 
-    private func runBatch(urls: [URL], job: UUID, work: (URL, Int, Int) async throws -> [URL]) async {
+    private func runBatch(urls: [URL], job: UUID, drop: CGPoint?, work: (URL, Int, Int) async throws -> [URL]) async {
         var outputs: [URL] = []
+        var bySource: [(URL, [URL])] = []
         do {
             for (offset, url) in urls.enumerated() {
                 try throwIfCancelled(job)
                 let written = try await work(url, offset + 1, urls.count)
                 outputs.append(contentsOf: written)
+                bySource.append((url, written))
             }
             let title = urls.count == 1 ? "Converted \(urls[0].lastPathComponent)" : "Converted \(urls.count) files"
-            finishJob(job, title: title, subtitle: outputs.last?.lastPathComponent ?? "", paths: outputs, success: true)
+            let placements: [(PlacementTarget, [URL])] = drop.map { [(.dropPoint($0), outputs)] }
+                ?? bySource.map { (.besideSource($0.0), $0.1) }
+            finishJob(job, title: title, subtitle: outputs.last?.lastPathComponent ?? "", paths: outputs, success: true, placements: placements)
         } catch {
             finishJob(job, title: "Conversion failed", subtitle: error.localizedDescription, paths: outputs, success: false)
         }
@@ -158,9 +185,9 @@ final class ConversionCenter: ObservableObject {
     /// Returns a short description for the HUD, or nil when there's nothing to undo.
     @discardableResult
     func undoLast() -> String? {
-        guard let trashed = RecentLog.undoLast(&recent) else { return nil }
+        guard let outcome = RecentLog.undo(&recent) else { return nil }
         persistRecent()
-        return RecentLog.message(trashed: trashed)
+        return RecentLog.message(outcome)
     }
 
     /// A short self-dismissing HUD card, used for undo feedback.
@@ -198,13 +225,15 @@ final class ConversionCenter: ObservableObject {
         onJobsChanged?(jobs)
     }
 
-    private func finishJob(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool) {
-        onMain { self.finishJobOnMain(id, title: title, subtitle: subtitle, paths: paths, success: success) }
+    private func finishJob(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool, placements: [(PlacementTarget, [URL])] = []) {
+        onMain { self.finishJobOnMain(id, title: title, subtitle: subtitle, paths: paths, success: success, placements: placements) }
     }
 
-    private func finishJobOnMain(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool) {
-        if success, let anchor = jobs.first(where: { $0.id == id })?.anchor {
-            FinderPlacement.place(paths, at: anchor)
+    private func finishJobOnMain(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool, placements: [(PlacementTarget, [URL])]) {
+        if success {
+            for (target, files) in placements where !files.isEmpty {
+                FinderPlacement.place(files, target: target)
+            }
         }
         runners[id] = nil
         cancelled.remove(id)

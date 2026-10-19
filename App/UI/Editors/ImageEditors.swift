@@ -7,19 +7,25 @@ struct CropEditor: View {
     var onClose: () -> Void
     /// Receives the crop rectangle; the engine crops and saves.
     var onApply: (PixelRect) -> Void
+    var onReplace: ((PixelRect) -> Void)?
+    var replaceBlocker: String?
 
     @State private var aspect: AspectPreset = .free
     @State private var crop: PixelRect
 
-    init(image: CGImage, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void) {
+    init(image: CGImage, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void,
+         onReplace: ((PixelRect) -> Void)? = nil, replaceBlocker: String? = nil) {
         self.image = image
         self.onClose = onClose
         self.onApply = onApply
+        self.onReplace = onReplace
+        self.replaceBlocker = replaceBlocker
         _crop = State(initialValue: PixelRect(x: 0, y: 0, width: image.width, height: image.height))
     }
 
     var body: some View {
-        EditorChrome(title: "Crop Image", primaryTitle: "Apply", onClose: onClose, onReset: reset, onPrimary: apply) {
+        EditorChrome(title: "Crop Image", primaryTitle: onReplace == nil ? "Apply" : "Save as New", onClose: onClose, onReset: reset, onPrimary: { onApply(crop) },
+                     replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { handler(crop) } }) {
             VStack(spacing: 14) {
                 CropCanvas(image: image, crop: $crop, aspect: aspect)
                     .padding(.horizontal, 18)
@@ -71,9 +77,6 @@ struct CropEditor: View {
         crop = PixelRect(x: 0, y: 0, width: image.width, height: image.height)
     }
 
-    private func apply() {
-        onApply(crop)
-    }
 }
 
 private struct CropCanvas: View {
@@ -240,8 +243,10 @@ struct AddBackgroundEditor: View {
     var onApply: (CGImage) -> Void
 
     @State private var padding: Double = 160
-    @State private var corners: Double = 24
-    @State private var shadow: Double = 24
+    // Corners and shadow are relative, so they look the same on a 400 px icon and a 6K screenshot.
+    // Corners: % of half the short edge (100% = pill). Shadow: blur as % of 10% of the long edge.
+    @State private var corners: Double = 12
+    @State private var shadow: Double = 40
     @State private var aspect: AspectPreset = .auto
     @State private var fill: BackgroundFill = BackgroundSwatches.all[0]
 
@@ -253,8 +258,8 @@ struct AddBackgroundEditor: View {
                 swatches
                 VStack(spacing: 8) {
                     LabeledSlider(title: "Padding", value: $padding, range: 0...800, display: "\(Int(padding)) px")
-                    LabeledSlider(title: "Corners", value: $corners, range: 0...240, display: "\(Int(corners)) px")
-                    LabeledSlider(title: "Shadow", value: $shadow, range: 0...80, display: "\(Int(shadow)) px")
+                    LabeledSlider(title: "Corners", value: $corners, range: 0...100, display: "\(Int(corners))%")
+                    LabeledSlider(title: "Shadow", value: $shadow, range: 0...100, display: "\(Int(shadow))%")
                 }
                 .padding(.horizontal, 18)
                 AspectChips(presets: [.auto, .square, .widescreen, .fourFive], selection: $aspect)
@@ -263,20 +268,24 @@ struct AddBackgroundEditor: View {
     }
 
     private var preview: some View {
+        // WYSIWYG: lay the canvas out exactly as the export does, scaled to fit the preview.
         GeometryReader { geo in
+            let canvas = BackgroundCanvas(imageWidth: image.width, imageHeight: image.height, padding: Int(padding), aspect: aspect).size
+            let scale = min(geo.size.width / CGFloat(canvas.width), geo.size.height / CGFloat(canvas.height))
+            let blur = shadowPixels * scale
             ZStack {
                 fillView
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-                    .padding(CGFloat(padding) / 8)
-                    .clipShape(RoundedRectangle(cornerRadius: corners / 6, style: .continuous))
-                    .shadow(color: .black.opacity(0.25), radius: shadow / 4, y: 4)
-                    .padding(12)
+                    .frame(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
+                    .clipShape(RoundedRectangle(cornerRadius: cornerPixels * scale, style: .circular))
+                    // CoreGraphics blur is roughly 2× SwiftUI's shadow radius for the same look.
+                    .shadow(color: .black.opacity(blur > 0 ? 0.45 : 0), radius: blur / 2, y: blur * 0.35)
             }
+            .frame(width: CGFloat(canvas.width) * scale, height: CGFloat(canvas.height) * scale)
+            .clipped()
             .frame(width: geo.size.width, height: geo.size.height)
-            .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
         .frame(maxHeight: .infinity)
     }
@@ -320,10 +329,18 @@ struct AddBackgroundEditor: View {
         }
     }
 
+    private var cornerPixels: CGFloat {
+        CGFloat(corners / 100) * CGFloat(min(image.width, image.height)) / 2
+    }
+
+    private var shadowPixels: CGFloat {
+        CGFloat(shadow / 100) * CGFloat(max(image.width, image.height)) * 0.1
+    }
+
     private func reset() {
-        padding = 48
-        corners = 24
-        shadow = 24
+        padding = 160
+        corners = 12
+        shadow = 40
         aspect = .auto
         fill = BackgroundSwatches.all[0]
     }
@@ -332,8 +349,8 @@ struct AddBackgroundEditor: View {
         if let rendered = ImageComposer.addBackground(
             image: image,
             padding: Int(padding),
-            cornerRadius: corners,
-            shadowRadius: shadow,
+            cornerRadius: cornerPixels,
+            shadowRadius: shadowPixels,
             background: fill,
             aspect: aspect
         ) {
