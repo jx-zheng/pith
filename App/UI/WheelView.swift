@@ -37,12 +37,13 @@ struct WheelView: View {
         let isHot = highlighted == index && segment.enabled
         return ZStack {
             if isHot {
-                shape.fill(PithTheme.highlight)
+                shape.fill(PithTheme.highlight.opacity(PithTheme.highlightOpacity))
             } else {
-                DesktopBlur(material: .popover)
+                DesktopBlur(material: .hudWindow)
                     .clipShape(shape)
-                shape.fill(PithTheme.cream.opacity(segment.enabled ? 0.55 : 0.28))
-                shape.fill(Color.white.opacity(segment.enabled ? 0.18 : 0.08))
+                    .opacity(PithTheme.segmentBlurOpacity)
+                shape.fill(PithTheme.cream.opacity(segment.enabled ? PithTheme.segmentTintOpacity : PithTheme.segmentTintOpacity * 0.5))
+                shape.fill(Color.white.opacity(segment.enabled ? PithTheme.segmentSheenOpacity : PithTheme.segmentSheenOpacity * 0.5))
             }
         }
         .overlay(
