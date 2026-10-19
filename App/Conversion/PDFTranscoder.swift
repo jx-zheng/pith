@@ -87,6 +87,14 @@ enum PDFTranscoder {
     static func merge(sources: [URL], destination: URL) throws -> [URL] {
         let document = PDFDocument()
         for source in sources {
+            if source.pathExtension.lowercased() != "pdf" {
+                // Images become one page each, sized to the image.
+                guard let image = NSImage(contentsOf: source), let page = PDFPage(image: image) else {
+                    throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
+                }
+                document.insert(page, at: document.pageCount)
+                continue
+            }
             guard let piece = PDFDocument(url: source) else {
                 throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
             }

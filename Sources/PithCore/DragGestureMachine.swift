@@ -60,6 +60,8 @@ public enum GestureEffect: Equatable, Sendable {
     case wheelKey(MonitorKey)
     /// A trigger key was tapped while no drag is in progress (click-select mode).
     case idleTap(WheelKind)
+    /// The open wheel's own trigger key was tapped again (double-tap favourite).
+    case repeatTap(WheelKind)
 }
 
 public struct DragGestureMachine: Equatable {
@@ -175,7 +177,7 @@ public struct DragGestureMachine: Equatable {
             return [.showWheel(kind, center, session)]
         case let .wheel(session, current):
             if current == kind {
-                return []
+                return [.repeatTap(kind)]
             }
             phase = .wheel(session, kind)
             return [.switchWheel(kind, session)]

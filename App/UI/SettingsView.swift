@@ -4,6 +4,9 @@ import SwiftUI
 import PithCore
 
 struct SettingsView: View {
+    @AppStorage(Favourites.key(.convert)) private var favConvert = ""
+    @AppStorage(Favourites.key(.tools)) private var favTools = ""
+    @AppStorage(Favourites.key(.actions)) private var favActions = ""
     @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
     @ObservedObject var model: AppModel
     @State private var loginStatus = ""
@@ -36,7 +39,15 @@ struct SettingsView: View {
                 keyPicker("Convert", key: $model.settings.bindings.convert)
                 keyPicker("Tools", key: $model.settings.bindings.tools)
                 keyPicker("Actions", key: $model.settings.bindings.actions)
-                Text("Tap the key while dragging a file. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
+                Text("Tap the key while dragging a file, or click a file in Finder and then tap it. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Double-tap favourites") {
+                favouriteField("Convert", text: $favConvert, example: "JPG")
+                favouriteField("Tools", text: $favTools, example: "COMPRESS")
+                favouriteField("Actions", text: $favActions, example: "COPY PATH")
+                Text("Double-tap a wheel's key to run its favourite straight away, with no aiming. Use the segment's label. Undo the last conversion with ⌃⌥⌘Z.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
@@ -159,6 +170,17 @@ struct SettingsView: View {
             Text("\(Int(value.wrappedValue * 100))%")
                 .monospacedDigit()
                 .frame(width: 44, alignment: .trailing)
+        }
+    }
+
+    private func favouriteField(_ title: String, text: Binding<String>, example: String) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            TextField("", text: text, prompt: Text("e.g. \(example)"))
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 180)
+                .labelsHidden()
         }
     }
 

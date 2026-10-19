@@ -100,7 +100,10 @@ public enum ToolRegistry {
                 ToolOffer(tool: .addBackground),
                 ToolOffer(tool: .crop),
                 ToolOffer(tool: .redact)
-            ]
+            ] + (fileCount >= 2 ? [ToolOffer(tool: .mergePDF)] : [])
+        }
+        if kinds == [.image, .pdf] {
+            return [ToolOffer(tool: .mergePDF, isEnabled: fileCount >= 2, unavailableReason: fileCount >= 2 ? nil : "Drop two or more files")]
         }
         if kinds == [.video] {
             let enabled = tools.hasFFmpeg
