@@ -9,6 +9,7 @@ final class DragController {
     var onDragEnded: (() -> Void)?
     var onWheelKey: ((MonitorKey) -> Void)?
     /// A trigger key was tapped with no drag in progress.
+    var onRepeatTap: ((WheelKind) -> Void)?
     var onIdleTap: ((WheelKind) -> Void)?
     /// Mouse-down in another app (global monitor only; clicks on Pith's own panels are excluded).
     var onGlobalMouseDown: (() -> Void)?
@@ -85,6 +86,8 @@ final class DragController {
                 break
             case let .idleTap(kind):
                 onIdleTap?(kind)
+            case let .repeatTap(kind):
+                onRepeatTap?(kind)
             }
         }
     }

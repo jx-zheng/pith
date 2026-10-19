@@ -81,7 +81,7 @@ final class GestureTests: XCTestCase {
         _ = machine.handle(.flagsChanged(time: 1.1, flags: []))
         _ = machine.handle(.flagsChanged(time: 1.4, flags: .shift))
         let again = machine.handle(.flagsChanged(time: 1.5, flags: []))
-        XCTAssertEqual(again, [])
+        XCTAssertEqual(again, [.repeatTap(.convert)])
         if case .wheel = machine.phase {} else { XCTFail("wheel should stay open") }
     }
 

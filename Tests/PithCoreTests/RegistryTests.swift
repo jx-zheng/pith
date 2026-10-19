@@ -85,6 +85,10 @@ final class RegistryTests: XCTestCase {
         XCTAssertEqual(one.first { $0.tool == .splitPDF }?.isEnabled, true)
         let two = ToolRegistry.tools(for: [FileTypes.pdf, FileTypes.pdf], tools: .none, fileCount: 2)
         XCTAssertEqual(two.first { $0.tool == .mergePDF }?.isEnabled, true)
+        let images = ToolRegistry.tools(for: [FileTypes.jpeg, FileTypes.jpeg], tools: .none, fileCount: 2)
+        XCTAssertEqual(images.last?.tool, .mergePDF)
+        let mixed = ToolRegistry.tools(for: [FileTypes.jpeg, FileTypes.pdf], tools: .none, fileCount: 2)
+        XCTAssertEqual(mixed.map(\.tool), [.mergePDF])
     }
 
     private var ffmpeg: ToolAvailability {

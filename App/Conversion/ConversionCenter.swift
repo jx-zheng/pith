@@ -143,10 +143,12 @@ final class ConversionCenter: ObservableObject {
     }
 
     private func merge(_ urls: [URL]) {
-        let pdfs = urls.filter { $0.pathExtension.lowercased() == "pdf" }
+        let pdfs = urls.filter {
+            $0.pathExtension.lowercased() == "pdf" || (UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) ?? false)
+        }
         guard pdfs.count >= 2 else { return }
         let anchor = NSEvent.mouseLocation
-        let job = startJob(title: "Merging PDFs", subtitle: "\(pdfs.count) files", anchor: anchor)
+        let job = startJob(title: "Merging into one PDF", subtitle: "\(pdfs.count) files", anchor: anchor)
         Task { @MainActor in
             do {
                 let path = OutputNamer.destination(
@@ -158,7 +160,7 @@ final class ConversionCenter: ObservableObject {
                 )
                 let destination = URL(fileURLWithPath: path)
                 let outputs = try PDFTranscoder.merge(sources: pdfs, destination: destination)
-                self.finishJob(job, title: "Merged \(pdfs.count) PDFs", subtitle: destination.lastPathComponent, paths: outputs, success: true)
+                self.finishJob(job, title: "Merged \(pdfs.count) files", subtitle: destination.lastPathComponent, paths: outputs, success: true)
             } catch {
                 self.finishJob(job, title: "Couldn't merge PDFs", subtitle: error.localizedDescription, paths: [], success: false)
             }
@@ -294,6 +296,35 @@ final class ConversionCenter: ObservableObject {
             try await ArchiveRunner.untar(source: source, destinationDirectory: destination, runner: runner)
         }
         return [destination]
+    }
+
+    /// Moves the newest successful conversion's outputs to the Trash.
+    /// Returns a short description for the HUD, or nil when there's nothing to undo.
+    @discardableResult
+    func undoLast() -> String? {
+        guard let index = recent.firstIndex(where: { $0.succeeded && !$0.outputPaths.isEmpty }) else { return nil }
+        let item = recent[index]
+        var trashed = 0
+        for path in item.outputPaths where FileManager.default.fileExists(atPath: path) {
+            if (try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)) != nil {
+                trashed += 1
+            }
+        }
+        recent.remove(at: index)
+        if let data = try? JSONEncoder().encode(recent) {
+            UserDefaults.standard.set(data, forKey: recentKey)
+        }
+        return trashed == 1 ? "Moved 1 file to the Trash" : "Moved \(trashed) files to the Trash"
+    }
+
+    /// A short self-dismissing HUD card, used for undo feedback.
+    func flash(title: String, subtitle: String) {
+        let id = startJob(title: title, subtitle: subtitle, anchor: NSEvent.mouseLocation)
+        update(job: id, title: title, subtitle: subtitle, progress: 1)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            self.jobs.removeAll { $0.id == id }
+            self.onJobsChanged?(self.jobs)
+        }
     }
 
     private func startJob(title: String, subtitle: String, anchor: CGPoint) -> UUID {

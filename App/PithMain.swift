@@ -32,6 +32,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private static let dropGrace: TimeInterval = 0.4
+    private static let doubleTapWindow: TimeInterval = 0.45
+    private var wheelShownAt = Date.distantPast
+    private var undoMonitors: [Any] = []
     /// Wheel opened from a Finder selection (no drag); segments are clicked, not dropped on.
     private var clickMode = false
 
@@ -89,6 +92,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             QuickLookPresenter.shared.show(paths: item.outputPaths)
         }
         menu.onCancelJobs = { [weak self] in self?.center.cancelAll() }
+        menu.onUndo = { [weak self] in self?.undoLastConversion() }
+        installUndoHotKey()
         menu.onSettings = { [weak self] in self?.showSettings() }
         menu.onQuit = { NSApp.terminate(nil) }
         menu.onPromptAccessibility = { [weak self] in
@@ -131,6 +136,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         drag.onWheelKey = { [weak self] key in
             self?.handleWheelKey(key)
         }
+        drag.onRepeatTap = { [weak self] kind in
+            DispatchQueue.main.async { _ = self?.runFavouriteIfDoubleTap(kind) }
+        }
         drag.onIdleTap = { [weak self] kind in
             DispatchQueue.main.async { self?.handleIdleTap(kind) }
         }
@@ -157,6 +165,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func handleIdleTap(_ kind: WheelKind) {
         if clickMode, wheel.isShowing, let session {
             if kind == self.kind {
+                if runFavouriteIfDoubleTap(kind) { return }
                 endClickMode()
             } else {
                 showWheel(kind: kind, at: nil, session: session)
@@ -201,7 +210,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
+    /// Second tap of the same key shortly after the wheel opened runs that wheel's favourite.
+    private func runFavouriteIfDoubleTap(_ kind: WheelKind) -> Bool {
+        guard wheel.isShowing, kind == self.kind,
+              Date().timeIntervalSince(wheelShownAt) < Self.doubleTapWindow,
+              let built, let index = Favourites.index(for: kind, in: built.segments) else { return false }
+        acceptDrop(index: index)
+        if clickMode {
+            clickMode = false
+            session = nil
+        }
+        return true
+    }
+
+    private func undoLastConversion() {
+        if let message = center.undoLast() {
+            center.flash(title: "Undid last conversion", subtitle: message)
+        } else {
+            NSSound.beep()
+        }
+    }
+
+    private func installUndoHotKey() {
+        // ⌃⌥⌘Z, system-wide. Global monitors observe only, so nothing else loses the key.
+        let matches: (NSEvent) -> Bool = { event in
+            event.keyCode == 6 &&
+            event.modifierFlags.intersection(.deviceIndependentFlagsMask).isSuperset(of: [.control, .option, .command]) &&
+            !event.modifierFlags.contains(.shift)
+        }
+        undoMonitors.append(NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if matches(event) { DispatchQueue.main.async { self?.undoLastConversion() } }
+        } as Any)
+        undoMonitors.append(NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            if matches(event) { self?.undoLastConversion(); return nil }
+            return event
+        } as Any)
+    }
+
     private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
+        if !wheel.isShowing || kind != self.kind { wheelShownAt = Date() }
         model.refreshTools()
         pushSettings()
         self.kind = kind

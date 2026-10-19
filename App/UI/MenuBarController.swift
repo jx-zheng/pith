@@ -9,6 +9,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var recentProvider: (() -> [RecentConversion])?
     var hasJobsProvider: (() -> Bool)?
     var onRevealRecent: ((RecentConversion) -> Void)?
+    var onUndo: (() -> Void)?
 
     func install() {
         statusItem.button?.image = MenuBarIcon.image()
@@ -54,6 +55,12 @@ final class MenuBarController: NSObject, NSMenuDelegate {
                 recentMenu.addItem(entry)
             }
         }
+        let undo = NSMenuItem(title: "Undo Last Conversion", action: #selector(undoLast), keyEquivalent: "z")
+        undo.keyEquivalentModifierMask = [.control, .option, .command]
+        undo.target = self
+        undo.isEnabled = recent.contains { $0.succeeded && !$0.outputPaths.isEmpty }
+        menu.autoenablesItems = false
+        menu.addItem(undo)
         let recentItem = NSMenuItem(title: "Recent conversions", action: nil, keyEquivalent: "")
         recentItem.submenu = recentMenu
         menu.addItem(recentItem)
@@ -72,6 +79,7 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     }
 
     @objc private func promptAccess() { onPromptAccessibility?() }
+    @objc private func undoLast() { onUndo?() }
     @objc private func openAccess() { AccessibilityPermission.openSystemSettings() }
     @objc private func openSettings() { onSettings?() }
     @objc private func quit() { onQuit?() }
