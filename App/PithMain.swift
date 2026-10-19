@@ -209,9 +209,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let built = WheelContents.build(kind: kind, session: session, availability: model.tools)
         self.built = built
         navigation = WheelNavigation(count: built.segments.count)
-        wheel.model.segments = built.segments
-        wheel.model.highlighted = nil
-        wheel.model.centerText = built.segments.isEmpty ? "NOTHING" : built.centerFallback
+        let apply = { [wheel] in
+            wheel.model.segments = built.segments
+            wheel.model.highlighted = nil
+            wheel.model.centerText = built.segments.isEmpty ? "NOTHING" : built.centerFallback
+        }
+        if wheel.isShowing {
+            // Switching wheels in place: cross-fade the old ring out and spin the new one in.
+            withAnimation(PithTheme.wheelSwitchAnimation) {
+                apply()
+                wheel.model.generation += 1
+            }
+        } else {
+            apply()
+        }
         if let point {
             wheel.present(at: CGPoint(x: point.x, y: point.y))
         } else if !wheel.isShowing {

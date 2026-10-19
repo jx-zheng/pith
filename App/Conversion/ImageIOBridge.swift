@@ -219,17 +219,30 @@ enum AnnotationRenderer {
             case .arrow:
                 guard flipped.count >= 2 else { continue }
                 let start = flipped[0]
-                let end = flipped[flipped.count - 1]
+                let tip = flipped[flipped.count - 1]
+                let dx = tip.x - start.x, dy = tip.y - start.y
+                let length = hypot(dx, dy)
+                guard length > 0.5 else { continue }
+                // Unit direction and its normal.
+                let ux = dx / length, uy = dy / length
+                let nx = -uy, ny = ux
+                // Head scales with stroke width, capped so short arrows keep a shaft.
+                let headLength = min(max(14, mark.width * 4.2), length * 0.6)
+                let halfWidth = max(7, mark.width * 2.2) * (headLength / max(14, mark.width * 4.2))
+                let base = CGPoint(x: tip.x - ux * headLength, y: tip.y - uy * headLength)
+                // Shaft stops just inside the head so its cap never pokes past the barbs or tip.
+                let overlap = min(headLength * 0.35, mark.width)
+                let shaftEnd = CGPoint(x: base.x + ux * overlap, y: base.y + uy * overlap)
                 context.beginPath()
                 context.move(to: start)
-                context.addLine(to: end)
+                context.addLine(to: shaftEnd)
+                context.setLineCap(.butt)
                 context.strokePath()
-                let angle = atan2(end.y - start.y, end.x - start.x)
-                let head: CGFloat = max(10, mark.width * 3)
-                let left = CGPoint(x: end.x - head * cos(angle - .pi / 6), y: end.y - head * sin(angle - .pi / 6))
-                let right = CGPoint(x: end.x - head * cos(angle + .pi / 6), y: end.y - head * sin(angle + .pi / 6))
+                context.setLineCap(.round)
+                let left = CGPoint(x: base.x + nx * halfWidth, y: base.y + ny * halfWidth)
+                let right = CGPoint(x: base.x - nx * halfWidth, y: base.y - ny * halfWidth)
                 context.beginPath()
-                context.move(to: end)
+                context.move(to: tip)
                 context.addLine(to: left)
                 context.addLine(to: right)
                 context.closePath()

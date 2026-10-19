@@ -39,9 +39,9 @@ struct WheelView: View {
             if isHot {
                 shape.fill(PithTheme.highlight.opacity(PithTheme.highlightOpacity))
             } else {
-                DesktopBlur(material: .hudWindow)
-                    .clipShape(shape)
-                    .opacity(PithTheme.segmentBlurOpacity)
+                // Plain translucent fills. A behind-window NSVisualEffectView ignores SwiftUI
+                // opacity and renders as solid grey, so it can't be used for see-through glass.
+                shape.fill(Color.white.opacity(segment.enabled ? PithTheme.segmentGlassOpacity : PithTheme.segmentGlassOpacity * 0.6))
                 shape.fill(PithTheme.cream.opacity(segment.enabled ? PithTheme.segmentTintOpacity : PithTheme.segmentTintOpacity * 0.5))
                 shape.fill(Color.white.opacity(segment.enabled ? PithTheme.segmentSheenOpacity : PithTheme.segmentSheenOpacity * 0.5))
             }
@@ -68,6 +68,7 @@ struct WheelView: View {
                 .minimumScaleFactor(0.55)
         }
         .foregroundStyle(isHot ? Color.white : PithTheme.ink.opacity(segment.enabled ? 1 : 0.45))
+        .shadow(color: isHot ? .black.opacity(0.25) : .white.opacity(0.7), radius: 2)
         .frame(width: labelWidth)
         .position(labelPosition(index))
         .allowsHitTesting(false)
@@ -129,7 +130,20 @@ struct WheelContainer: View {
     @ObservedObject var model: WheelModel
 
     var body: some View {
-        WheelView(segments: model.segments, centerText: model.centerText, highlighted: model.highlighted)
+        ZStack {
+            WheelView(segments: model.segments, centerText: model.centerText, highlighted: model.highlighted)
+                .id(model.generation)
+                .transition(.asymmetric(
+                    insertion: .modifier(
+                        active: WheelSwitchEffect(scale: 0.88, angle: -14, opacity: 0, blur: 3),
+                        identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
+                    ),
+                    removal: .modifier(
+                        active: WheelSwitchEffect(scale: 1.1, angle: 10, opacity: 0, blur: 4),
+                        identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
+                    )
+                ))
+        }
             .scaleEffect(model.appeared ? 1 : 0.84)
             .opacity(model.appeared ? 1 : 0)
             .onAppear { play() }
@@ -147,7 +161,25 @@ struct WheelContainer: View {
     }
 }
 
+/// Scale, spin, fade and soften a whole wheel while it swaps for another.
+struct WheelSwitchEffect: ViewModifier {
+    var scale: CGFloat
+    var angle: Double
+    var opacity: Double
+    var blur: CGFloat
+
+    func body(content: Content) -> some View {
+        content
+            .scaleEffect(scale)
+            .rotationEffect(.degrees(angle))
+            .blur(radius: blur)
+            .opacity(opacity)
+    }
+}
+
 final class WheelModel: ObservableObject {
+    /// Bumped on every in-place wheel switch so SwiftUI transitions old ring to new.
+    @Published var generation = 0
     @Published var segments: [WheelSegmentModel] = []
     @Published var highlighted: Int?
     @Published var centerText: String = ""
