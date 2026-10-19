@@ -1,0 +1,69 @@
+name: Pith
+options:
+  bundleIdPrefix: com.kevinzheng
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  developmentLanguage: en
+settings:
+  SWIFT_VERSION: "5.0"
+  MACOSX_DEPLOYMENT_TARGET: "14.0"
+  SWIFT_STRICT_CONCURRENCY: minimal
+packages:
+  PithCore:
+    path: .
+targets:
+  Pith:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: App
+        excludes:
+          - Info.plist
+          - Pith.entitlements
+    dependencies:
+      - package: PithCore
+        product: PithCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.kevinzheng.pith
+        PRODUCT_NAME: Pith
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Pith.entitlements
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGN_STYLE: Automatic
+        COMBINE_HIDPI_IMAGES: YES
+        ENABLE_TESTABILITY: YES
+        LD_RUNPATH_SEARCH_PATHS: "$(inherited) @executable_path/../Frameworks"
+        OTHER_LDFLAGS: ["-framework", "Quartz", "-framework", "PDFKit", "-framework", "AVFoundation", "-framework", "ApplicationServices"]
+  PithCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/PithCoreTests
+    dependencies:
+      - package: PithCore
+        product: PithCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.kevinzheng.pith.tests
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        ENABLE_TESTABILITY: YES
+schemes:
+  Pith:
+    build:
+      targets:
+        Pith: all
+        PithCoreTests: [test]
+    run:
+      config: Debug
+    test:
+      targets:
+        - PithCoreTests
