@@ -6,6 +6,8 @@ import SwiftUI
 /// supplies the rest, so the wedge shifts with the wallpaper the way the
 /// original does.
 enum PithTheme {
+    /// In-place wheel switch (Shift/Command/Control while a wheel is open).
+    static let wheelSwitchAnimation: Animation = .spring(response: 0.34, dampingFraction: 0.82)
     static let wheelDiameter: CGFloat = 400
     static let innerRatio: CGFloat = 0.40
     static let gapDegrees: Double = 6.5
@@ -13,9 +15,10 @@ enum PithTheme {
     static let panelPadding: CGFloat = 36
 
     /// Glass transparency. Lower = more see-through.
-    static let segmentBlurOpacity: Double = 0.55
-    static let segmentTintOpacity: Double = 0.30
-    static let segmentSheenOpacity: Double = 0.08
+    /// Glass transparency: lower values show more of what's behind the wheel.
+    static let segmentGlassOpacity: Double = 0.34
+    static let segmentTintOpacity: Double = 0.12
+    static let segmentSheenOpacity: Double = 0.06
     static let highlightOpacity: Double = 0.88
 
     /// #EB4420

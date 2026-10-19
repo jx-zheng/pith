@@ -141,7 +141,9 @@ enum EditorWindow {
         window.titlebarAppearsTransparent = true
         window.isOpaque = false
         window.backgroundColor = .clear
-        window.isMovableByWindowBackground = true
+        // Editors use click-drag on their canvas (redact, crop, annotate), so only the
+        // title-bar strip moves the window.
+        window.isMovableByWindowBackground = false
         window.level = .floating
         window.center()
         let host = NSHostingView(rootView: content())

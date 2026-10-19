@@ -1,15 +1,21 @@
+import Foundation
+
 public enum ToolLocator {
+    /// Where `scripts/install.sh` puts tools when Homebrew isn't writable.
+    public static var userBin: String { NSHomeDirectory() + "/.local/bin" }
+
     public static func candidates(for tool: ExternalTool) -> [String] {
         switch tool {
         case .ffmpeg:
-            return ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]
+            return ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", userBin + "/ffmpeg"]
         case .ffprobe:
-            return ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe"]
+            return ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", userBin + "/ffprobe"]
         case .pandoc:
-            return ["/opt/homebrew/bin/pandoc", "/usr/local/bin/pandoc"]
+            return ["/opt/homebrew/bin/pandoc", "/usr/local/bin/pandoc", userBin + "/pandoc"]
         case .soffice:
             return [
                 "/Applications/LibreOffice.app/Contents/MacOS/soffice",
+                NSHomeDirectory() + "/Applications/LibreOffice.app/Contents/MacOS/soffice",
                 "/opt/homebrew/bin/soffice",
                 "/usr/local/bin/soffice"
             ]
