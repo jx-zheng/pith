@@ -93,7 +93,9 @@ build_and_install() {
     DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" build \
     > /tmp/pith_build.log 2>&1 || { grep -E "error:" /tmp/pith_build.log | sort -u; exit 1; }
   log "Installing to $APPS/Pith.app"
-  pkill -x Pith 2>/dev/null || true; sleep 0.5
+  # Wait for the old copy to exit: a new launch hands off to (and quits for) a running one.
+  pkill -x Pith 2>/dev/null || true
+  for _ in $(seq 1 50); do pgrep -x Pith >/dev/null || break; sleep 0.2; done
   rm -rf "$APPS/Pith.app"; cp -R build/Build/Products/Debug/Pith.app "$APPS/"
   open "$APPS/Pith.app"
 }

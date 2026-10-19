@@ -56,7 +56,10 @@ public enum OutputNamer {
         if base.isEmpty || base == "/" {
             return url.lastPathComponent
         }
-        // `notes.tar.gz` should keep `notes.tar` only if the extension we strip is the last one.
+        // `notes.tar.gz` → `notes`, so extracting or re-archiving doesn't leave `notes.tar`.
+        if url.lastPathComponent.lowercased().hasSuffix(".tar.gz"), base.lowercased().hasSuffix(".tar") {
+            return String(base.dropLast(4))
+        }
         return base
     }
 

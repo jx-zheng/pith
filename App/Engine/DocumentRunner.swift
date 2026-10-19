@@ -7,7 +7,18 @@ enum DocumentRunner {
         guard let pandoc = tools.pandoc else {
             throw ConversionFailure.toolMissing(PandocScripts.installHint)
         }
-        guard let spec = PandocScripts.convert(pandoc: pandoc, input: source.path, output: destination.path, from: input, to: output) else {
+        var readPath = source.path
+        var staging: URL?
+        if input.family == "text" {
+            // Pandoc has no plain-text reader; hand it the text as literal HTML paragraphs.
+            let text = try String(contentsOf: source, encoding: .utf8)
+            let html = FileManager.default.temporaryDirectory.appendingPathComponent("pith-text-\(UUID().uuidString).html")
+            try PandocScripts.plainTextAsHTML(text).write(to: html, atomically: true, encoding: .utf8)
+            readPath = html.path
+            staging = html
+        }
+        defer { if let staging { try? FileManager.default.removeItem(at: staging) } }
+        guard let spec = PandocScripts.convert(pandoc: pandoc, input: readPath, output: destination.path, from: input, to: output) else {
             throw ConversionFailure.unsupported("Pandoc doesn't bridge \(input.label) to \(output.label).")
         }
         let (status, errorText) = try await runner.runWithError(spec)
@@ -16,14 +27,14 @@ enum DocumentRunner {
         }
     }
 
-    static func soffice(source: URL, destination: URL, format: String, tools: ToolAvailability, runner: ProcessRunner) async throws {
+    static func soffice(source: URL, destination: URL, format: String, infilter: String? = nil, tools: ToolAvailability, runner: ProcessRunner) async throws {
         guard let soffice = tools.soffice else {
             throw ConversionFailure.toolMissing(SofficeScripts.installHint)
         }
         let temp = FileManager.default.temporaryDirectory.appendingPathComponent("pith-soffice-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: temp, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: temp) }
-        let spec = SofficeScripts.convert(soffice: soffice, input: source.path, outputDirectory: temp.path, format: format)
+        let spec = SofficeScripts.convert(soffice: soffice, input: source.path, outputDirectory: temp.path, format: format, infilter: infilter)
         let (status, errorText) = try await runner.runWithError(spec)
         guard status == 0 else {
             throw ConversionFailure.toolFailed(errorText.isEmpty ? "LibreOffice failed." : String(errorText.suffix(500)))

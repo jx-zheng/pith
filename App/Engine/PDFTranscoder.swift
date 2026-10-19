@@ -67,6 +67,25 @@ enum PDFTranscoder {
         return [destination]
     }
 
+    /// PDF → DOCX without LibreOffice: each page's text (with PDFKit's basic styling) as one Word document.
+    static func toDocx(source: URL, destination: URL) throws -> [URL] {
+        guard let document = PDFDocument(url: source) else {
+            throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
+        }
+        let combined = NSMutableAttributedString()
+        for index in 0..<document.pageCount {
+            guard let text = document.page(at: index)?.attributedString else { continue }
+            if combined.length > 0 { combined.append(NSAttributedString(string: "\n\n")) }
+            combined.append(text)
+        }
+        let data = try combined.data(
+            from: NSRange(location: 0, length: combined.length),
+            documentAttributes: [.documentType: NSAttributedString.DocumentType.officeOpenXML]
+        )
+        try data.write(to: destination, options: .atomic)
+        return [destination]
+    }
+
     static func imageToPDF(image: CGImage, destination: URL) throws -> [URL] {
         let maxSide: CGFloat = 11 * 72
         let longEdge = CGFloat(max(image.width, image.height))

@@ -25,10 +25,15 @@ final class RegistryTests: XCTestCase {
         XCTAssertEqual(offers.first { $0.label == "DOCX" }?.isEnabled, true)
     }
 
-    func testPDFDocxGreyedOutWithoutTools() {
+    func testPDFDocxUsesLibreOfficeElseNative() {
         let offers = ConverterRegistry.conversionOffers(for: FileTypes.pdf, tools: .none)
         XCTAssertEqual(offers.map(\.label), ["DOCX", "JPG", "PNG", "TXT"])
-        XCTAssertEqual(offers.first { $0.label == "DOCX" }?.isEnabled, false)
+        XCTAssertEqual(offers.first { $0.label == "DOCX" }?.isEnabled, true)
+        XCTAssertEqual(offers.first { $0.label == "DOCX" }?.backend, .pdfKit)
+        // Pandoc can't read PDF, so it must never be picked for PDF → DOCX.
+        let withPandoc = ConverterRegistry.conversionOffers(for: FileTypes.pdf, tools: pandoc)
+        XCTAssertEqual(withPandoc.first { $0.label == "DOCX" }?.backend, .pdfKit)
+        XCTAssertEqual(ConverterRegistry.conversionOffers(for: FileTypes.pdf, tools: soffice).first { $0.label == "DOCX" }?.backend, .libreOffice)
     }
 
     func testVideoTargetsAndNativeRoute() {

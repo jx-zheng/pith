@@ -8,48 +8,48 @@ struct SettingsView: View {
     @AppStorage(Favourites.key(.tools)) private var favTools = ""
     @AppStorage(Favourites.key(.actions)) private var favActions = ""
     @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
+    @AppStorage(MenuBarPreference.key) private var showMenuBarIcon = true
     @ObservedObject var model: AppModel
     @State private var loginStatus = ""
+
+    /// Every slider row shares these, so the tracks start and end at the same x.
+    private static let sliderWidth: CGFloat = 220
+    private static let valueWidth: CGFloat = 72
 
     var body: some View {
         Form {
             Section("Appearance") {
-                Picker("Accent colour", selection: $accentRaw) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        HStack(spacing: 8) {
-                            Circle().fill(theme.highlight).frame(width: 12, height: 12)
-                            Text(theme.title)
+                LabeledContent("Accent colour") {
+                    HStack(spacing: 10) {
+                        ForEach(AccentTheme.allCases) { theme in
+                            Circle()
+                                .fill(theme.highlight)
+                                .frame(width: 18, height: 18)
+                                .overlay(Circle().stroke(Color.primary.opacity(accentRaw == theme.rawValue ? 0.9 : 0), lineWidth: 2).padding(-3))
+                                .help(theme.title)
+                                .onTapGesture { accentRaw = theme.rawValue }
                         }
-                        .tag(theme.rawValue)
+                        Picker("Accent colour", selection: $accentRaw) {
+                            ForEach(AccentTheme.allCases) { theme in
+                                Text(theme.title).tag(theme.rawValue)
+                            }
+                        }
+                        .labelsHidden()
+                        .fixedSize()
                     }
                 }
-                HStack(spacing: 10) {
-                    ForEach(AccentTheme.allCases) { theme in
-                        Circle()
-                            .fill(theme.highlight)
-                            .frame(width: 22, height: 22)
-                            .overlay(Circle().stroke(Color.primary.opacity(accentRaw == theme.rawValue ? 0.9 : 0), lineWidth: 2).padding(-3))
-                            .help(theme.title)
-                            .onTapGesture { accentRaw = theme.rawValue }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             Section("Wheels") {
                 keyPicker("Convert", key: $model.settings.bindings.convert)
                 keyPicker("Tools", key: $model.settings.bindings.tools)
                 keyPicker("Actions", key: $model.settings.bindings.actions)
-                Text("Tap the key while dragging a file, or click a file in Finder and then tap it. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                caption("Tap the key while dragging a file, or click a file in Finder and then tap it. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
             }
             Section("Double-tap favourites") {
-                favouriteField("Convert", text: $favConvert, example: "JPG")
-                favouriteField("Tools", text: $favTools, example: "COMPRESS")
-                favouriteField("Actions", text: $favActions, example: "COPY PATH")
-                Text("Double-tap a wheel's key to run its favourite straight away, with no aiming. Use the segment's label. Undo the last conversion with ⌃⌥⌘Z.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                favouritePicker("Convert", kind: .convert, selection: $favConvert)
+                favouritePicker("Tools", kind: .tools, selection: $favTools)
+                favouritePicker("Actions", kind: .actions, selection: $favActions)
+                caption("Double-tap a wheel's key to run its favourite straight away, with no aiming. It fires only when that segment is on the wheel and enabled for the file. Undo the last conversion with ⌃⌥⌘Z.")
             }
             Section("Output") {
                 Picker("Location", selection: locationBinding) {
@@ -57,35 +57,29 @@ struct SettingsView: View {
                     Text("Fixed folder").tag(1)
                 }
                 .pickerStyle(.radioGroup)
+                .horizontalRadioGroupLayout()
                 if case let .directory(path) = model.settings.outputLocation {
-                    HStack {
-                        Text(path).lineLimit(1).truncationMode(.middle)
-                        Button("Choose…") { chooseFolder() }
+                    LabeledContent("Folder") {
+                        HStack(spacing: 8) {
+                            Text(path)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .foregroundStyle(.secondary)
+                                .help(path)
+                            Button("Choose…") { chooseFolder() }
+                        }
                     }
                 }
-                qualitySlider("JPEG quality", value: $model.settings.jpegQuality)
-                qualitySlider("HEIC quality", value: $model.settings.heicQuality)
-                HStack {
-                    Text("PDF render")
-                    // No `step:`: on macOS a stepped slider draws one tick per step,
-                    // which rendered as a solid line under the track.
-                    Slider(value: $model.settings.pdfRenderDPI, in: 72...600)
-                    Text("\(Int(model.settings.pdfRenderDPI.rounded())) DPI")
-                        .monospacedDigit()
-                        .frame(width: 72, alignment: .trailing)
-                }
+                sliderRow("JPEG quality", value: $model.settings.jpegQuality, in: 0.4...1, display: "\(Int((model.settings.jpegQuality * 100).rounded()))%")
+                sliderRow("HEIC quality", value: $model.settings.heicQuality, in: 0.4...1, display: "\(Int((model.settings.heicQuality * 100).rounded()))%")
+                sliderRow("PDF render", value: $model.settings.pdfRenderDPI, in: 72...600, display: "\(Int(model.settings.pdfRenderDPI.rounded())) DPI")
             }
             Section("Video") {
                 Picker("Codec", selection: $model.settings.videoCodec) {
                     Text("H.264 (videotoolbox, else libx264)").tag(VideoCodecPreference.h264)
                     Text("HEVC (videotoolbox, else libx265)").tag(VideoCodecPreference.hevc)
                 }
-                HStack {
-                    Text("Bitrate")
-                    Slider(value: $model.settings.videoBitrateMbps, in: 0.5...40)
-                    Text(String(format: "%.1f Mbps", model.settings.videoBitrateMbps))
-                        .frame(width: 88, alignment: .trailing)
-                }
+                sliderRow("Bitrate", value: $model.settings.videoBitrateMbps, in: 0.5...40, display: String(format: "%.1f Mbps", model.settings.videoBitrateMbps))
             }
             Section("External tools") {
                 toolRow("ffmpeg", path: model.tools.ffmpeg, brew: ExternalTool.ffmpeg.brewInstallLine, override: $model.settings.ffmpegOverride)
@@ -101,20 +95,26 @@ struct SettingsView: View {
             Section("General") {
                 Toggle("Launch at login", isOn: loginBinding)
                 if !loginStatus.isEmpty {
-                    Text(loginStatus).font(.callout).foregroundStyle(.secondary)
+                    caption(loginStatus)
                 }
                 if SMAppService.mainApp.status == .requiresApproval {
                     Button("Open Login Items Settings") {
                         SMAppService.openSystemSettingsLoginItems()
                     }
                 }
+                Toggle(isOn: $showMenuBarIcon) {
+                    Text("Show icon in menu bar")
+                    Text("When it's hidden, open Pith again (double-click it in Applications, or run open -a Pith) to get back to Settings.")
+                }
             }
         }
         .formStyle(.grouped)
-        .frame(width: 560, height: 640)
-        .padding(8)
+        .frame(width: 560, height: 680)
         .tint(PithTheme.highlight)
-        .onAppear { refreshLoginCopy() }
+        .onAppear {
+            refreshLoginCopy()
+            normaliseFavourites()
+        }
         .onChange(of: model.settings) { _, _ in
             model.save()
         }
@@ -155,6 +155,13 @@ struct SettingsView: View {
         )
     }
 
+    private func caption(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func keyPicker(_ title: String, key: Binding<TriggerKey>) -> some View {
         Picker(title, selection: key) {
             ForEach(TriggerKey.allCases, id: \.self) { trigger in
@@ -163,24 +170,64 @@ struct SettingsView: View {
         }
     }
 
-    private func qualitySlider(_ title: String, value: Binding<Double>) -> some View {
-        HStack {
-            Text(title)
-            Slider(value: value, in: 0.4...1)
-            Text("\(Int(value.wrappedValue * 100))%")
-                .monospacedDigit()
-                .frame(width: 44, alignment: .trailing)
+    /// Label at the leading edge; fixed-width slider and value column at the trailing edge.
+    private func sliderRow(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, display: String) -> some View {
+        LabeledContent(title) {
+            HStack(spacing: 12) {
+                // No `step:`: on macOS a stepped slider draws one tick per step,
+                // which rendered as a solid line under the track.
+                Slider(value: value, in: range)
+                    .labelsHidden()
+                    .frame(width: Self.sliderWidth)
+                Text(display)
+                    .monospacedDigit()
+                    .frame(width: Self.valueWidth, alignment: .trailing)
+            }
         }
     }
 
-    private func favouriteField(_ title: String, text: Binding<String>, example: String) -> some View {
-        HStack {
-            Text(title)
-            Spacer()
-            TextField("", text: text, prompt: Text("e.g. \(example)"))
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 180)
-                .labelsHidden()
+    /// Options come from `FavouriteCatalog`: every label that wheel can show, grouped.
+    /// The stored value stays the label string, so `Favourites.index` is unchanged.
+    private func favouritePicker(_ title: String, kind: WheelKind, selection: Binding<String>) -> some View {
+        let groups = FavouriteCatalog.groups(for: kind)
+        let known = Set(groups.flatMap(\.labels))
+        let current = selection.wrappedValue
+        return Picker(title, selection: selection) {
+            Text("None").tag("")
+            if !current.isEmpty && !known.contains(current) {
+                Text("\(current) (not on any wheel)").tag(current)
+            }
+            Divider()
+            if groups.count == 1, let only = groups.first {
+                ForEach(only.labels, id: \.self) { label in
+                    Text(label).tag(label)
+                }
+            } else {
+                ForEach(groups, id: \.title) { group in
+                    Section(group.title) {
+                        ForEach(group.labels, id: \.self) { label in
+                            Text(label).tag(label)
+                        }
+                    }
+                }
+            }
+        }
+        .pickerStyle(.menu)
+    }
+
+    /// Values typed into the old free-text fields ("jpg ", "copy path") snap to their picker label.
+    private func normaliseFavourites() {
+        let fields: [(WheelKind, Binding<String>)] = [(.convert, $favConvert), (.tools, $favTools), (.actions, $favActions)]
+        for (kind, binding) in fields {
+            let trimmed = binding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            if trimmed.isEmpty {
+                if !binding.wrappedValue.isEmpty { binding.wrappedValue = "" }
+                continue
+            }
+            if let label = FavouriteCatalog.labels(for: kind).first(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }),
+               label != binding.wrappedValue {
+                binding.wrappedValue = label
+            }
         }
     }
 

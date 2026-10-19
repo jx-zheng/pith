@@ -51,14 +51,6 @@ enum PithTheme {
     }
 }
 
-struct WheelSegmentModel: Identifiable, Equatable {
-    var id: String
-    var title: String
-    var symbol: String?
-    var enabled: Bool
-    var help: String?
-}
-
 struct DesktopBlur: NSViewRepresentable {
     var material: NSVisualEffectView.Material = .popover
 

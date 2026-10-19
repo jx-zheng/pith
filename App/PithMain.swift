@@ -43,7 +43,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         super.init()
     }
 
+    /// Set when macOS started Pith as a login item; such launches never pop Settings open.
+    private var launchedAsLoginItem = false
+    private static let showSettingsNotification = Notification.Name("com.kevinzheng.pith.showSettings")
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // The open-application Apple Event is only readable while it's being handled.
+        if let event = NSAppleEventManager.shared().currentAppleEvent,
+           event.eventID == kAEOpenApplication,
+           event.paramDescriptor(forKeyword: keyAEPropData)?.enumCodeValue == keyAELaunchedAsLogInItem {
+            launchedAsLoginItem = true
+        }
+    }
+
+    /// `open -a Pith` or a double-click while Pith is already running.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showSettings()
+        return false
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if handOffToRunningInstance() { return }
         model.refreshTools()
         pushSettings()
         Notifier.shared.requestAuthorization()
@@ -71,7 +91,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         drag.start()
         if !AccessibilityPermission.isTrusted(prompt: false) {
             showOnboarding()
+        } else if !MenuBarPreference.isVisible && !launchedAsLoginItem {
+            // No icon to click, so a manual launch is how Kevin gets back to Settings.
+            showSettings()
         }
+    }
+
+    /// A second copy (e.g. `open -n`, or another build) tells the running one to show
+    /// Settings and quits, so two instances never watch the same drags.
+    private func handOffToRunningInstance() -> Bool {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return false }
+        let me = ProcessInfo.processInfo.processIdentifier
+        guard let other = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            .first(where: { $0.processIdentifier != me && !$0.isTerminated }) else { return false }
+        DistributedNotificationCenter.default().postNotificationName(
+            Self.showSettingsNotification, object: nil, userInfo: nil, deliverImmediately: true
+        )
+        other.activate()
+        DispatchQueue.main.async { NSApp.terminate(nil) }
+        return true
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -101,6 +139,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.onboardingWindow?.close()
         }
         menu.install()
+        // The Settings toggle writes through @AppStorage; follow it live.
+        NotificationCenter.default.addObserver(forName: UserDefaults.didChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            guard let self, self.menu.isVisible != MenuBarPreference.isVisible else { return }
+            self.menu.setVisible(MenuBarPreference.isVisible)
+        }
+        DistributedNotificationCenter.default().addObserver(forName: Self.showSettingsNotification, object: nil, queue: .main) { [weak self] _ in
+            self?.showSettings()
+        }
     }
 
     private func wireDrag() {
@@ -375,15 +421,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 600, height: 700),
-            styleMask: [.titled, .closable, .miniaturizable],
-            backing: .buffered,
-            defer: false
-        )
+        // The window takes the SwiftUI form's own size, so there's no dead margin around it.
+        let host = NSHostingController(rootView: SettingsView(model: model))
+        let window = NSWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .miniaturizable]
         window.title = "Pith Settings"
-        window.contentView = NSHostingView(rootView: SettingsView(model: model))
         window.isReleasedWhenClosed = false
+        window.setContentSize(host.view.fittingSize)
         window.center()
         window.makeKeyAndOrderFront(nil)
         settingsWindow = window
@@ -425,8 +469,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .crop(url):
             presentWindow(size: NSSize(width: 760, height: 860)) { close in
                 self.imageEditor(url, close: close) { image, close in
-                    CropEditor(image: image, onClose: close) { cropped in
-                        self.saveImage(cropped, source: url, suffix: " Cropped", ext: "jpg", uti: FileTypes.jpeg.uti, quality: self.model.settings.clampedJPEGQuality)
+                    CropEditor(image: image, onClose: close) { rect in
+                        self.save(source: url) { try $0.crop(image, source: url, to: rect) }
                         close()
                     }
                 }
@@ -435,7 +479,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentWindow(size: NSSize(width: 760, height: 860)) { close in
                 self.imageEditor(url, close: close) { image, close in
                     AddBackgroundEditor(image: image, onClose: close) { composed in
-                        self.saveImage(composed, source: url, suffix: " Background", ext: "png", uti: FileTypes.png.uti, quality: nil)
+                        self.save(source: url) { try $0.addBackground(composed, source: url) }
                         close()
                     }
                 }
@@ -444,7 +488,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentWindow(size: NSSize(width: 760, height: 820)) { close in
                 self.imageEditor(url, close: close) { image, close in
                     AnnotateEditor(image: image, onClose: close) { marked in
-                        self.saveKeepingFormat(marked, source: url, suffix: " Annotated")
+                        self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Annotated") }
                         close()
                     }
                 }
@@ -453,7 +497,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentWindow(size: NSSize(width: 760, height: 820)) { close in
                 self.imageEditor(url, close: close) { image, close in
                     RedactEditor(image: image, onClose: close) { marked in
-                        self.saveKeepingFormat(marked, source: url, suffix: " Redacted")
+                        self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Redacted") }
                         close()
                     }
                 }
@@ -462,7 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             presentWindow(size: NSSize(width: 720, height: 780)) { close in
                 self.imageEditor(url, close: close) { image, close in
                     AdjustEditor(image: image, onClose: close) { edited in
-                        self.saveKeepingFormat(edited, source: url, suffix: " Edited")
+                        self.save(source: url) { try $0.saveKeepingFormat(edited, source: url, suffix: " Edited") }
                         close()
                     }
                 }
@@ -471,9 +515,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             let rows = ImageIOBridge.properties(of: url)
             presentWindow(size: NSSize(width: 560, height: 640)) { close in
                 MetadataEditor(source: url, rows: rows, onClose: close) {
-                    if let image = try? ImageIOBridge.loadOriented(url) {
-                        self.saveKeepingFormat(image, source: url, suffix: " Clean")
-                    }
+                    self.save(source: url) { try $0.stripMetadata(url) }
                     close()
                 }
             }
@@ -490,8 +532,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     isVideo: isVideo,
                     onClose: close,
                     onApplyImage: { rendered, quality, maxEdge in
-                        let scaled = ImageIOBridge.scaled(rendered, maxEdge: maxEdge)
-                        self.saveImage(scaled, source: url, suffix: " Compressed", ext: "jpg", uti: FileTypes.jpeg.uti, quality: quality)
+                        self.save(source: url) { try $0.compressImage(rendered, source: url, quality: quality, maxEdge: maxEdge) }
                         close()
                     },
                     onApplyVideo: { bitrate in
@@ -541,26 +582,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editorWindows.append(window)
     }
 
-    private func saveImage(_ image: CGImage, source: URL, suffix: String, ext: String, uti: String, quality: Double?) {
+    /// Runs an editor save through the engine, then records it for Recent and Undo.
+    private func save(source: URL, _ work: (ConversionEngine) throws -> URL) {
         pushSettings()
         do {
-            _ = try center.saveEditedImage(image, source: source, suffix: suffix, fileExtension: ext, uti: uti, quality: quality)
+            center.recordSaved(try work(center.engine), source: source)
         } catch {
             Notifier.shared.post(title: "Couldn't save", body: error.localizedDescription, paths: [])
         }
-    }
-
-    private func saveKeepingFormat(_ image: CGImage, source: URL, suffix: String) {
-        let matched = FileTypes.matching(path: source.path)
-        let ext = matched?.primaryExtension ?? "png"
-        let uti = matched?.uti ?? FileTypes.png.uti
-        let quality: Double?
-        switch matched?.family {
-        case "jpeg": quality = model.settings.clampedJPEGQuality
-        case "heic": quality = model.settings.clampedHEICQuality
-        default: quality = nil
-        }
-        saveImage(image, source: source, suffix: suffix, ext: ext, uti: uti, quality: quality)
     }
 
     private func probeDuration(_ url: URL) async -> Double {

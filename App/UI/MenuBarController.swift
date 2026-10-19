@@ -1,7 +1,18 @@
 import AppKit
 
+/// "Show icon in menu bar" (Settings → General). Defaults to on.
+enum MenuBarPreference {
+    static let key = "pith.showMenuBarIcon"
+
+    static var isVisible: Bool {
+        UserDefaults.standard.object(forKey: key) as? Bool ?? true
+    }
+}
+
 final class MenuBarController: NSObject, NSMenuDelegate {
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    /// Nil while the icon is hidden; the menu itself lives on so re-showing is instant.
+    private var statusItem: NSStatusItem?
+    private let menu = NSMenu()
     var onSettings: (() -> Void)?
     var onQuit: (() -> Void)?
     var onPromptAccessibility: (() -> Void)?
@@ -12,12 +23,26 @@ final class MenuBarController: NSObject, NSMenuDelegate {
     var onUndo: (() -> Void)?
 
     func install() {
-        statusItem.button?.image = MenuBarIcon.image()
-        statusItem.button?.imagePosition = .imageOnly
-        let menu = NSMenu()
         menu.delegate = self
-        statusItem.menu = menu
         rebuild(menu)
+        setVisible(MenuBarPreference.isVisible)
+    }
+
+    var isVisible: Bool { statusItem != nil }
+
+    /// Adds or removes the status item. Hidden means removed, not just zero-width.
+    func setVisible(_ visible: Bool) {
+        if visible, statusItem == nil {
+            let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+            item.button?.image = MenuBarIcon.image()
+            item.button?.imagePosition = .imageOnly
+            item.button?.toolTip = "Pith"
+            item.menu = menu
+            statusItem = item
+        } else if !visible, let item = statusItem {
+            NSStatusBar.system.removeStatusItem(item)
+            statusItem = nil
+        }
     }
 
     func menuWillOpen(_ menu: NSMenu) {

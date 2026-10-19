@@ -55,9 +55,12 @@ enum MediaRunner {
         tools: ToolAvailability,
         runner: ProcessRunner,
         trim: TrimRange? = nil,
+        allowNative: Bool = true,
         progress: @escaping (Double) -> Void
     ) async throws {
-        if MediaRouter.prefersAVFoundation(input: FileTypes.matching(path: source.path) ?? output, output: output), trim == nil {
+        // AVAssetExportSession presets can't take a bitrate or a range, so Compress and Trim
+        // (allowNative false) always go through ffmpeg.
+        if allowNative, trim == nil, MediaRouter.prefersAVFoundation(input: FileTypes.matching(path: source.path) ?? output, output: output) {
             do {
                 try await AVExportRunner.export(source: source, destination: destination, output: output, progress: progress)
                 return
@@ -102,9 +105,11 @@ enum MediaRunner {
         throw ConversionFailure.toolFailed(String(lastError.suffix(500)))
     }
 
+    /// WebP/AVIF still: ImageIO decodes (HEIC grids, EXIF orientation), ffmpeg encodes.
     static func still(
         source: URL,
         destination: URL,
+        output: FileType,
         quality: Double?,
         tools: ToolAvailability,
         runner: ProcessRunner
@@ -112,14 +117,15 @@ enum MediaRunner {
         guard let ffmpeg = tools.ffmpeg else {
             throw ConversionFailure.toolMissing("Install via \(ExternalTool.ffmpeg.brewInstallLine)")
         }
-        var arguments = ["-y", "-hide_banner", "-i", source.path]
-        if let quality {
-            arguments.append(contentsOf: ["-quality", String(Int(quality * 100))])
-        }
-        arguments.append(destination.path)
-        let spec = CommandSpec(executable: ffmpeg, arguments: arguments, progressOnStdout: false)
+        let image = try ImageIOBridge.loadOriented(source)
+        let staging = FileManager.default.temporaryDirectory.appendingPathComponent("pith-still-\(UUID().uuidString).png")
+        defer { try? FileManager.default.removeItem(at: staging) }
+        try ImageIOBridge.write(image, to: staging, uti: FileTypes.png.uti, quality: nil)
+        let spec = FFmpegScripts.still(ffmpeg: ffmpeg, input: staging.path, output: destination.path, outputType: output, quality: quality)
         let (status, errorText) = try await runner.runWithError(spec)
         guard status == 0 else {
+            try? FileManager.default.removeItem(at: destination)
+            if runnerWasCancelled(status) { throw ConversionFailure.cancelled }
             throw ConversionFailure.toolFailed(errorText.isEmpty ? "ffmpeg couldn't write \(destination.lastPathComponent)." : String(errorText.suffix(500)))
         }
     }

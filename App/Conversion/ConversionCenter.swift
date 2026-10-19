@@ -1,16 +1,6 @@
 import AppKit
 import Foundation
 import PithCore
-import UniformTypeIdentifiers
-
-struct RecentConversion: Codable, Identifiable, Equatable {
-    var id: UUID
-    var title: String
-    var subtitle: String
-    var outputPaths: [String]
-    var succeeded: Bool
-    var date: Date
-}
 
 enum EditorRequest {
     case crop(URL)
@@ -23,6 +13,7 @@ enum EditorRequest {
     case trim([URL])
 }
 
+/// Runs `ConversionEngine` work as HUD jobs, places results in Finder, and keeps the recent list.
 final class ConversionCenter: ObservableObject {
     @Published var jobs: [HUDJob] = []
     @Published var recent: [RecentConversion] = []
@@ -31,6 +22,8 @@ final class ConversionCenter: ObservableObject {
     var tools: ToolAvailability = .none
     var presentEditor: ((EditorRequest) -> Void)?
     var onJobsChanged: (([HUDJob]) -> Void)?
+
+    var engine: ConversionEngine { ConversionEngine(settings: settings, tools: tools) }
 
     private var runners: [UUID: ProcessRunner] = [:]
     private var cancelled: Set<UUID> = []
@@ -55,10 +48,11 @@ final class ConversionCenter: ObservableObject {
     func convert(urls: [URL], offer: ConversionOffer, anchor: CGPoint) {
         guard offer.isEnabled else { return }
         let job = startJob(title: "Converting to \(offer.label)", subtitle: subtitle(for: urls), anchor: anchor)
+        let engine = self.engine
         Task { @MainActor in
             await self.runBatch(urls: urls, job: job) { url, index, count in
                 self.update(job: job, title: count > 1 ? "Converting \(index) of \(count) to \(offer.label)" : "Converting to \(offer.label)", subtitle: url.lastPathComponent, progress: Double(index - 1) / Double(count))
-                return try await self.convertOne(url, offer: offer, jobID: job) { fraction in
+                return try await engine.convert(url, offer: offer, runner: self.makeRunner(job)) { fraction in
                     let overall = (Double(index - 1) + fraction) / Double(count)
                     self.update(job: job, title: self.jobs.first { $0.id == job }?.title ?? "", subtitle: url.lastPathComponent, progress: overall)
                 }
@@ -91,48 +85,23 @@ final class ConversionCenter: ObservableObject {
         }
     }
 
-    func saveEditedImage(_ image: CGImage, source: URL, suffix: String, fileExtension: String, uti: String, quality: Double?) throws -> URL {
-        let path = OutputNamer.destination(
-            sourcePath: source.path,
-            outputExtension: fileExtension,
-            location: location(for: source),
-            style: .suffix(suffix),
-            exists: { FileManager.default.fileExists(atPath: $0) }
-        )
-        let url = URL(fileURLWithPath: path)
-        try ImageIOBridge.write(image, to: url, uti: uti, quality: quality)
+    /// Records an editor save (crop, annotate, …) so it shows in Recent and can be undone.
+    @discardableResult
+    func recordSaved(_ url: URL, source: URL) -> URL {
         finishSuccess(title: "Saved \(url.lastPathComponent)", subtitle: source.lastPathComponent, paths: [url])
         return url
     }
 
     func exportVideo(source: URL, trim: TrimRange?, bitrate: Double?, anchor: CGPoint) {
-        guard let output = FileTypes.matching(path: source.path) else { return }
-        var tuned = settings
-        if let bitrate { tuned.videoBitrateMbps = bitrate }
-        let job = startJob(title: trim == nil ? "Compressing" : "Trimming", subtitle: source.lastPathComponent, anchor: anchor)
+        let title = trim == nil ? "Compressing" : "Trimming"
+        let job = startJob(title: title, subtitle: source.lastPathComponent, anchor: anchor)
+        let engine = self.engine
         Task { @MainActor in
             do {
                 try self.throwIfCancelled(job)
-                let path = OutputNamer.destination(
-                    sourcePath: source.path,
-                    outputExtension: output.primaryExtension,
-                    location: self.location(for: source),
-                    style: .suffix(trim == nil ? " Compressed" : " Trimmed"),
-                    exists: { FileManager.default.fileExists(atPath: $0) }
-                )
-                let destination = URL(fileURLWithPath: path)
-                let runner = self.makeRunner(job)
-                try await MediaRunner.convert(
-                    source: source,
-                    destination: destination,
-                    output: output,
-                    settings: tuned,
-                    tools: self.tools,
-                    runner: runner,
-                    trim: trim
-                ) { fraction in
+                let destination = try await engine.exportVideo(source: source, trim: trim, bitrate: bitrate, runner: self.makeRunner(job)) { fraction in
                     Task { @MainActor in
-                        self.update(job: job, title: trim == nil ? "Compressing" : "Trimming", subtitle: source.lastPathComponent, progress: fraction)
+                        self.update(job: job, title: title, subtitle: source.lastPathComponent, progress: fraction)
                     }
                 }
                 self.finishJob(job, title: "Saved \(destination.lastPathComponent)", subtitle: source.lastPathComponent, paths: [destination], success: true)
@@ -143,24 +112,14 @@ final class ConversionCenter: ObservableObject {
     }
 
     private func merge(_ urls: [URL]) {
-        let pdfs = urls.filter {
-            $0.pathExtension.lowercased() == "pdf" || (UTType(filenameExtension: $0.pathExtension)?.conforms(to: .image) ?? false)
-        }
-        guard pdfs.count >= 2 else { return }
-        let anchor = NSEvent.mouseLocation
-        let job = startJob(title: "Merging into one PDF", subtitle: "\(pdfs.count) files", anchor: anchor)
+        let count = ConversionEngine.mergeCandidates(urls).count
+        guard count >= 2 else { return }
+        let job = startJob(title: "Merging into one PDF", subtitle: "\(count) files", anchor: NSEvent.mouseLocation)
+        let engine = self.engine
         Task { @MainActor in
             do {
-                let path = OutputNamer.destination(
-                    sourcePath: pdfs[0].path,
-                    outputExtension: "pdf",
-                    location: self.location(for: pdfs[0]),
-                    style: .suffix(" Merged"),
-                    exists: { FileManager.default.fileExists(atPath: $0) }
-                )
-                let destination = URL(fileURLWithPath: path)
-                let outputs = try PDFTranscoder.merge(sources: pdfs, destination: destination)
-                self.finishJob(job, title: "Merged \(pdfs.count) files", subtitle: destination.lastPathComponent, paths: outputs, success: true)
+                let outputs = try engine.merge(urls)
+                self.finishJob(job, title: "Merged \(count) files", subtitle: outputs.first?.lastPathComponent ?? "", paths: outputs, success: true)
             } catch {
                 self.finishJob(job, title: "Couldn't merge PDFs", subtitle: error.localizedDescription, paths: [], success: false)
             }
@@ -168,11 +127,11 @@ final class ConversionCenter: ObservableObject {
     }
 
     private func split(_ url: URL) {
-        let anchor = NSEvent.mouseLocation
-        let job = startJob(title: "Splitting PDF", subtitle: url.lastPathComponent, anchor: anchor)
+        let job = startJob(title: "Splitting PDF", subtitle: url.lastPathComponent, anchor: NSEvent.mouseLocation)
+        let engine = self.engine
         Task { @MainActor in
             do {
-                let outputs = try PDFTranscoder.split(source: url, location: self.location(for: url), exists: { FileManager.default.fileExists(atPath: $0) })
+                let outputs = try engine.split(url)
                 self.finishJob(job, title: "Split into \(outputs.count) PDFs", subtitle: url.lastPathComponent, paths: outputs, success: true)
             } catch {
                 self.finishJob(job, title: "Couldn't split PDF", subtitle: error.localizedDescription, paths: [], success: false)
@@ -195,126 +154,13 @@ final class ConversionCenter: ObservableObject {
         }
     }
 
-    private func convertOne(_ source: URL, offer: ConversionOffer, jobID: UUID, progress: @escaping (Double) -> Void) async throws -> [URL] {
-        let input = resolvedType(of: source)
-        let destination = URL(fileURLWithPath: OutputNamer.destination(
-            sourcePath: source.path,
-            outputExtension: offer.output.primaryExtension == "bin" ? "zip" : offer.output.primaryExtension,
-            location: location(for: source),
-            exists: { FileManager.default.fileExists(atPath: $0) }
-        ))
-        if offer.id == "unzip" || offer.id == "untar" {
-            return try await extract(source: source, offer: offer, jobID: jobID)
-        }
-        switch offer.backend {
-        case .imageIO:
-            let quality = quality(for: offer.output)
-            do {
-                try ImageIOBridge.convert(source: source, destination: destination, uti: offer.output.uti, quality: quality)
-                progress(1)
-                return [destination]
-            } catch {
-                let needsFFmpeg = offer.output.family == "webp" || offer.output.family == "avif"
-                guard tools.ffmpeg != nil, needsFFmpeg else { throw error }
-                try await MediaRunner.still(source: source, destination: destination, quality: quality, tools: tools, runner: makeRunner(jobID))
-                return [destination]
-            }
-        case .pdfKit:
-            if input.kind == .image {
-                let image = try ImageIOBridge.loadOriented(source)
-                return try PDFTranscoder.imageToPDF(image: image, destination: destination)
-            }
-            if offer.output.kind == .image {
-                return try PDFTranscoder.renderPages(
-                    source: source,
-                    format: offer.output,
-                    dpi: settings.pdfRenderDPI,
-                    location: location(for: source),
-                    quality: quality(for: offer.output),
-                    exists: { FileManager.default.fileExists(atPath: $0) }
-                )
-            }
-            return try PDFTranscoder.extractText(source: source, destination: destination)
-        case .avFoundation, .ffmpeg:
-            let runner = makeRunner(jobID)
-            try await MediaRunner.convert(source: source, destination: destination, output: offer.output, settings: settings, tools: tools, runner: runner, progress: progress)
-            return [destination]
-        case .pandoc:
-            let runner = makeRunner(jobID)
-            try await DocumentRunner.pandoc(source: source, destination: destination, input: input, output: offer.output, tools: tools, runner: runner)
-            return [destination]
-        case .libreOffice:
-            let format = offer.output.family == "text" ? "txt" : offer.output.primaryExtension
-            try await DocumentRunner.soffice(source: source, destination: destination, format: format, tools: tools, runner: makeRunner(jobID))
-            return [destination]
-        case .attributedString:
-            try DocumentRunner.attributed(source: source, destination: destination, output: offer.output)
-            return [destination]
-        case .csv:
-            _ = try await CSVConverter().run(source: source, destination: destination, context: ConversionContext())
-            return [destination]
-        case .subtitles:
-            _ = try await SubtitleConverter().run(source: source, destination: destination, context: ConversionContext())
-            return [destination]
-        case .archive:
-            let runner = makeRunner(jobID)
-            if offer.output.family == "zip" {
-                try await ArchiveRunner.zip(source: source, destination: destination, runner: runner)
-            } else {
-                let tarDest = URL(fileURLWithPath: OutputNamer.destination(
-                    sourcePath: source.path,
-                    outputExtension: "tar.gz",
-                    location: location(for: source),
-                    exists: { FileManager.default.fileExists(atPath: $0) }
-                ))
-                try await ArchiveRunner.tarGzip(source: source, destination: tarDest, runner: runner)
-                return [tarDest]
-            }
-            return [destination]
-        }
-    }
-
-    private func extract(source: URL, offer: ConversionOffer, jobID: UUID) async throws -> [URL] {
-        let base = OutputNamer.baseName(of: source.path)
-        let parent = OutputNamer.outputDirectory(for: source.path, location: location(for: source))
-        var n = 1
-        var folder = ""
-        while n < 1000 {
-            let name = n == 1 ? base : "\(base) \(n)"
-            let candidate = (parent == "/" ? "" : parent) + "/" + name
-            if !FileManager.default.fileExists(atPath: candidate) {
-                folder = candidate
-                break
-            }
-            n += 1
-        }
-        let destination = URL(fileURLWithPath: folder)
-        let runner = makeRunner(jobID)
-        if offer.id == "unzip" {
-            try await ArchiveRunner.unzip(source: source, destinationDirectory: destination, runner: runner)
-        } else {
-            try await ArchiveRunner.untar(source: source, destinationDirectory: destination, runner: runner)
-        }
-        return [destination]
-    }
-
     /// Moves the newest successful conversion's outputs to the Trash.
     /// Returns a short description for the HUD, or nil when there's nothing to undo.
     @discardableResult
     func undoLast() -> String? {
-        guard let index = recent.firstIndex(where: { $0.succeeded && !$0.outputPaths.isEmpty }) else { return nil }
-        let item = recent[index]
-        var trashed = 0
-        for path in item.outputPaths where FileManager.default.fileExists(atPath: path) {
-            if (try? FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: nil)) != nil {
-                trashed += 1
-            }
-        }
-        recent.remove(at: index)
-        if let data = try? JSONEncoder().encode(recent) {
-            UserDefaults.standard.set(data, forKey: recentKey)
-        }
-        return trashed == 1 ? "Moved 1 file to the Trash" : "Moved \(trashed) files to the Trash"
+        guard let trashed = RecentLog.undoLast(&recent) else { return nil }
+        persistRecent()
+        return RecentLog.message(trashed: trashed)
     }
 
     /// A short self-dismissing HUD card, used for undo feedback.
@@ -361,32 +207,27 @@ final class ConversionCenter: ObservableObject {
             FinderPlacement.place(paths, at: anchor)
         }
         runners[id] = nil
+        cancelled.remove(id)
         jobs.removeAll { $0.id == id }
         onJobsChanged?(jobs)
-        let recentItem = RecentConversion(
-            id: UUID(),
-            title: title,
-            subtitle: subtitle,
-            outputPaths: paths.map(\.path),
-            succeeded: success,
-            date: Date()
-        )
-        recent.insert(recentItem, at: 0)
-        recent = Array(recent.prefix(12))
-        if let data = try? JSONEncoder().encode(recent) {
-            UserDefaults.standard.set(data, forKey: recentKey)
-        }
-        Notifier.shared.post(title: title, body: subtitle, paths: paths.map(\.path))
+        record(title: title, subtitle: subtitle, paths: paths, success: success)
     }
 
     private func finishSuccess(title: String, subtitle: String, paths: [URL]) {
-        let recentItem = RecentConversion(id: UUID(), title: title, subtitle: subtitle, outputPaths: paths.map(\.path), succeeded: true, date: Date())
-        recent.insert(recentItem, at: 0)
-        recent = Array(recent.prefix(12))
+        onMain { self.record(title: title, subtitle: subtitle, paths: paths, success: true) }
+    }
+
+    private func record(title: String, subtitle: String, paths: [URL], success: Bool) {
+        let item = RecentConversion(id: UUID(), title: title, subtitle: subtitle, outputPaths: paths.map(\.path), succeeded: success, date: Date())
+        RecentLog.record(item, into: &recent)
+        persistRecent()
+        Notifier.shared.post(title: title, body: subtitle, paths: paths.map(\.path))
+    }
+
+    private func persistRecent() {
         if let data = try? JSONEncoder().encode(recent) {
             UserDefaults.standard.set(data, forKey: recentKey)
         }
-        Notifier.shared.post(title: title, body: subtitle, paths: paths.map(\.path))
     }
 
     private func makeRunner(_ id: UUID) -> ProcessRunner {
@@ -403,124 +244,5 @@ final class ConversionCenter: ObservableObject {
     private func subtitle(for urls: [URL]) -> String {
         if urls.count == 1 { return urls[0].lastPathComponent }
         return "\(urls.count) files"
-    }
-
-    private func location(for source: URL) -> OutputLocation {
-        if case .directory = settings.outputLocation { return settings.outputLocation }
-        let temp = FileManager.default.temporaryDirectory.standardizedFileURL.path
-        if source.standardizedFileURL.path.hasPrefix(temp) {
-            let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first?.path
-                ?? (NSHomeDirectory() + "/Downloads")
-            return .directory(downloads)
-        }
-        return .besideSource
-    }
-
-    private func quality(for type: FileType) -> Double? {
-        switch type.family {
-        case "jpeg": return settings.clampedJPEGQuality
-        case "heic": return settings.clampedHEICQuality
-        default: return nil
-        }
-    }
-
-    private func resolvedType(of url: URL) -> FileType {
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), isDir.boolValue {
-            return FileTypes.folder
-        }
-        if let matched = FileTypes.matching(path: url.path) { return matched }
-        return FileTypes.text
-    }
-}
-
-enum WheelContents {
-    struct Built {
-        var segments: [WheelSegmentModel]
-        var offers: [ConversionOffer]
-        var tools: [ToolOffer]
-        var actions: [FileActionID]
-        var centerFallback: String
-    }
-
-    static func build(kind: WheelKind, session: DragSession, availability: ToolAvailability) -> Built {
-        let types = fileTypes(in: session)
-        let fallback = centerFallback(session)
-        switch kind {
-        case .convert:
-            let offers = commonOffers(types, availability: availability)
-            let segments = offers.map {
-                WheelSegmentModel(id: $0.id, title: $0.label, symbol: nil, enabled: $0.isEnabled, help: $0.unavailableReason)
-            }
-            return Built(segments: segments, offers: offers, tools: [], actions: [], centerFallback: fallback)
-        case .tools:
-            let toolOffers = ToolRegistry.tools(for: types, tools: availability, fileCount: max(session.filePaths.count, types.count))
-            let segments = toolOffers.map {
-                WheelSegmentModel(id: $0.id, title: $0.tool.label, symbol: $0.tool.symbolName, enabled: $0.isEnabled, help: $0.unavailableReason)
-            }
-            return Built(segments: segments, offers: [], tools: toolOffers, actions: [], centerFallback: fallback)
-        case .actions:
-            let actions = ToolRegistry.actions()
-            let segments = actions.map {
-                WheelSegmentModel(id: $0.rawValue, title: $0.label, symbol: $0.symbolName, enabled: true, help: nil)
-            }
-            return Built(segments: segments, offers: [], tools: [], actions: actions, centerFallback: fallback)
-        }
-    }
-
-    static func fileTypes(in session: DragSession) -> [FileType] {
-        if !session.filePaths.isEmpty {
-            return session.filePaths.map(resolvePath)
-        }
-        let promised = session.promisedTypeIdentifiers.compactMap(resolveUTI)
-        return promised
-    }
-
-    static func resolvePath(_ path: String) -> FileType {
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
-            return FileTypes.folder
-        }
-        if let matched = FileTypes.matching(path: path) { return matched }
-        let ext = URL(fileURLWithPath: path).pathExtension
-        if let ut = UTType(filenameExtension: ext) {
-            if let matched = FileTypes.matching(uti: ut.identifier) { return matched }
-            if ut.conforms(to: .image) { return FileTypes.jpeg }
-            if ut.conforms(to: .movie) || ut.conforms(to: .video) { return FileTypes.mp4 }
-            if ut.conforms(to: .audio) { return FileTypes.m4a }
-            if ut.conforms(to: .pdf) { return FileTypes.pdf }
-        }
-        return FileType(uti: "public.data", extensions: [ext], label: ext.uppercased(), family: ext.lowercased(), kind: .other)
-    }
-
-    static func resolveUTI(_ identifier: String) -> FileType? {
-        if let matched = FileTypes.matching(uti: identifier) { return matched }
-        guard let ut = UTType(identifier) else { return nil }
-        if ut.conforms(to: .image) { return FileTypes.jpeg }
-        if ut.conforms(to: .movie) || ut.conforms(to: .video) { return FileTypes.mp4 }
-        if ut.conforms(to: .pdf) { return FileTypes.pdf }
-        if ut.conforms(to: .audio) { return FileTypes.m4a }
-        return nil
-    }
-
-    static func centerFallback(_ session: DragSession) -> String {
-        if session.filePaths.count > 1 { return "\(session.filePaths.count) FILES" }
-        if session.filePaths.isEmpty && session.hasFilePromise { return "FILE" }
-        guard let path = session.filePaths.first else { return "" }
-        let attributes = try? FileManager.default.attributesOfItem(atPath: path)
-        if let number = attributes?[.size] as? NSNumber {
-            return ByteCountFormat.string(bytes: number.int64Value)
-        }
-        return URL(fileURLWithPath: path).pathExtension.uppercased()
-    }
-
-    private static func commonOffers(_ types: [FileType], availability: ToolAvailability) -> [ConversionOffer] {
-        guard let first = types.first else { return [] }
-        var offers = ConverterRegistry.conversionOffers(for: first, tools: availability)
-        for type in types.dropFirst() {
-            let labels = Set(ConverterRegistry.conversionOffers(for: type, tools: availability).map(\.label))
-            offers = offers.filter { labels.contains($0.label) }
-        }
-        return offers
     }
 }

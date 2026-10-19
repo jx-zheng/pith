@@ -53,13 +53,13 @@ public enum ConverterRegistry {
             offer(FileTypes.png, backend: .pdfKit, enabled: true, reason: nil),
             offer(FileTypes.text, backend: .pdfKit, enabled: true, reason: nil)
         ]
-        let docxEnabled = tools.hasSoffice || tools.hasPandoc
-        let docxReason = docxEnabled ? nil : "Install via \(ExternalTool.soffice.brewInstallLine)"
+        // Pandoc can't read PDF. LibreOffice imports it into Writer; without it, PDFKit's
+        // text (with basic styling) is written as DOCX natively.
         offers.append(offer(
             FileTypes.docx,
-            backend: tools.hasPandoc ? .pandoc : .libreOffice,
-            enabled: docxEnabled,
-            reason: docxReason
+            backend: tools.hasSoffice ? .libreOffice : .pdfKit,
+            enabled: true,
+            reason: nil
         ))
         return offers
     }
