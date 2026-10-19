@@ -58,6 +58,8 @@ public enum GestureEffect: Equatable, Sendable {
     case dismissWheel
     case dragEnded
     case wheelKey(MonitorKey)
+    /// A trigger key was tapped while no drag is in progress (click-select mode).
+    case idleTap(WheelKind)
 }
 
 public struct DragGestureMachine: Equatable {
@@ -177,7 +179,9 @@ public struct DragGestureMachine: Equatable {
             }
             phase = .wheel(session, kind)
             return [.switchWheel(kind, session)]
-        case .idle, .pressed, .nonFileDrag:
+        case .idle:
+            return [.idleTap(kind)]
+        case .pressed, .nonFileDrag:
             return []
         }
     }

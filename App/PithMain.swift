@@ -31,6 +31,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var editorWindows: [NSWindow] = []
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
+    private static let dropGrace: TimeInterval = 0.4
+    /// Wheel opened from a Finder selection (no drag); segments are clicked, not dropped on.
+    private var clickMode = false
 
     override init() {
         drag = DragController(bindings: .default)
@@ -47,10 +50,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         center.presentEditor = { [weak self] request in
-            self?.present(request)
+            DispatchQueue.main.async { self?.present(request) }
         }
         center.onJobsChanged = { [weak self] jobs in
-            self?.syncHUD(jobs)
+            if Thread.isMainThread {
+                self?.syncHUD(jobs)
+            } else {
+                DispatchQueue.main.async { self?.syncHUD(jobs) }
+            }
         }
         hud.onCancel = { [weak self] id in
             self?.center.cancel(id)
@@ -99,10 +106,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.showWheel(kind: kind, at: nil, session: session)
         }
         drag.onDismissWheel = { [weak self] in
-            self?.dismissWheel()
+            // On mouse-up the global monitor can fire before AppKit delivers
+            // performDragOperation to the wheel. Dismissing right away orders the
+            // panel out from under the drop, so give the drop a moment to land.
+            if NSEvent.pressedMouseButtons & 1 == 0 {
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.dropGrace) {
+                    guard let self, !self.dropAccepted else { return }
+                    self.dismissWheel()
+                }
+            } else {
+                self?.dismissWheel()
+            }
         }
         drag.onDragEnded = { [weak self] in
-            DispatchQueue.main.async {
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.dropGrace + 0.05) {
                 guard let self else { return }
                 if !self.dropAccepted {
                     self.dismissWheel()
@@ -114,6 +131,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         drag.onWheelKey = { [weak self] key in
             self?.handleWheelKey(key)
         }
+        drag.onIdleTap = { [weak self] kind in
+            DispatchQueue.main.async { self?.handleIdleTap(kind) }
+        }
+        drag.onGlobalMouseDown = { [weak self] in
+            DispatchQueue.main.async {
+                guard let self, self.clickMode else { return }
+                self.endClickMode()
+            }
+        }
+        drag.onGlobalKeyDown = { [weak self] key in
+            DispatchQueue.main.async {
+                guard let self, self.clickMode, self.wheel.isShowing else { return }
+                if key == .escape {
+                    self.endClickMode()
+                } else {
+                    self.handleWheelKey(key)
+                }
+            }
+        }
+    }
+
+    /// Select a file in Finder (click and release), then tap a trigger key.
+    /// Tapping another trigger key while the wheel is open switches wheels in place.
+    private func handleIdleTap(_ kind: WheelKind) {
+        if clickMode, wheel.isShowing, let session {
+            if kind == self.kind {
+                endClickMode()
+            } else {
+                showWheel(kind: kind, at: nil, session: session)
+            }
+            return
+        }
+        guard !drag.typedSinceClick,
+              NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
+        let paths = FinderSelection.paths()
+        guard !paths.isEmpty else { return }
+        let mouse = NSEvent.mouseLocation
+        let point = Point(x: mouse.x, y: mouse.y)
+        let session = DragSession(
+            changeCount: -1,
+            filePaths: paths,
+            hasFilePromise: false,
+            promisedTypeIdentifiers: [],
+            location: point
+        )
+        clickMode = true
+        showWheel(kind: kind, at: point, session: session)
+    }
+
+    private func endClickMode() {
+        clickMode = false
+        session = nil
+        dismissWheel()
     }
 
     private func wireWheel() {
@@ -122,6 +192,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         wheel.onDropIndex = { [weak self] index in
             self?.acceptDrop(index: index)
+        }
+        wheel.onClickIndex = { [weak self] index in
+            guard let self, self.clickMode else { return }
+            self.acceptDrop(index: index)
+            self.clickMode = false
+            self.session = nil
         }
     }
 
@@ -182,6 +258,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func acceptDrop(index: Int) {
+        NSLog("Pith: acceptDrop index=%d kind=%@ paths=%@", index, String(describing: kind), String(describing: session?.filePaths ?? []))
         dropAccepted = true
         let paths = session?.filePaths ?? []
         let receivers = NSPasteboard(name: .drag).readObjects(
@@ -209,6 +286,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
         pushSettings()
+        NSLog("Pith: perform kind=%@ index=%d urls=%@", String(describing: kind), index, urls.map(\.path).joined(separator: ", "))
         switch kind {
         case .convert:
             guard built.offers.indices.contains(index) else { return }

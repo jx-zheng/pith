@@ -11,6 +11,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     private(set) var isShowing = false
     var onDropIndex: ((Int) -> Void)?
     var onHoverIndex: ((Int?) -> Void)?
+    /// Click-select mode: a segment was clicked.
+    var onClickIndex: ((Int) -> Void)?
 
     override init() {
         let side = PithTheme.wheelDiameter + PithTheme.panelPadding
@@ -33,12 +35,23 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         panel.isMovable = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isReleasedWhenClosed = false
+        panel.acceptsMouseMovedEvents = true
         dropView.controller = self
-        panel.contentView = dropView
+        // The SwiftUI hosting view registers its own drag types and would swallow the
+        // drop if it sat above the destination view. Keep it underneath, and put the
+        // transparent drop view on top so AppKit routes dragging callbacks to us.
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: side, height: side))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        panel.contentView = container
         let host = NSHostingView(rootView: WheelContainer(model: model))
-        host.frame = dropView.bounds
+        host.frame = container.bounds
         host.autoresizingMask = [.width, .height]
-        dropView.addSubview(host)
+        host.unregisterDraggedTypes()
+        container.addSubview(host)
+        dropView.frame = container.bounds
+        dropView.autoresizingMask = [.width, .height]
+        container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
 
     func present(at screenPoint: CGPoint) {
@@ -75,7 +88,10 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         return geometry.index(at: local, center: .zero)
     }
 
-    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
+    func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        NSLog("Pith: draggingEntered wheel")
+        return draggingUpdated(sender)
+    }
 
     func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         let index = highlight(at: sender.draggingLocation)
@@ -89,6 +105,21 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         return .copy
     }
 
+    func pointerMoved(to windowPoint: NSPoint) {
+        let index = highlight(at: windowPoint)
+        if model.highlighted != index {
+            model.highlighted = index
+            onHoverIndex?(index)
+        }
+    }
+
+    func clicked(at windowPoint: NSPoint) {
+        guard let index = highlight(at: windowPoint),
+              model.segments.indices.contains(index),
+              model.segments[index].enabled else { return }
+        onClickIndex?(index)
+    }
+
     func draggingExited(_ sender: NSDraggingInfo?) {
         model.highlighted = nil
         onHoverIndex?(nil)
@@ -97,6 +128,7 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
 
     func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        NSLog("Pith: performDragOperation at %@", NSStringFromPoint(sender.draggingLocation))
         let index = highlight(at: sender.draggingLocation) ?? model.highlighted
         guard let index, model.segments.indices.contains(index), model.segments[index].enabled else {
             return false
@@ -122,6 +154,33 @@ final class WheelDropView: NSView {
     }
 
     override var isOpaque: Bool { false }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(NSTrackingArea(
+            rect: bounds,
+            options: [.mouseMoved, .mouseEnteredAndExited, .activeAlways, .inVisibleRect],
+            owner: self,
+            userInfo: nil
+        ))
+    }
+
+    override func mouseMoved(with event: NSEvent) {
+        controller?.pointerMoved(to: convert(event.locationInWindow, from: nil))
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        controller?.pointerMoved(to: NSPoint(x: -10_000, y: -10_000))
+    }
+
+    override func mouseDown(with event: NSEvent) {}
+
+    override func mouseUp(with event: NSEvent) {
+        controller?.clicked(at: convert(event.locationInWindow, from: nil))
+    }
 
     private func registerDragTypes() {
         var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL]

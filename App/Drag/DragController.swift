@@ -8,6 +8,15 @@ final class DragController {
     var onDismissWheel: (() -> Void)?
     var onDragEnded: (() -> Void)?
     var onWheelKey: ((MonitorKey) -> Void)?
+    /// A trigger key was tapped with no drag in progress.
+    var onIdleTap: ((WheelKind) -> Void)?
+    /// Mouse-down in another app (global monitor only; clicks on Pith's own panels are excluded).
+    var onGlobalMouseDown: (() -> Void)?
+    /// Any key-down outside Pith, regardless of drag state.
+    var onGlobalKeyDown: ((MonitorKey) -> Void)?
+    /// True once a real key has been typed since the last click; used to keep
+    /// click-select mode from firing while renaming a file or typing.
+    private(set) var typedSinceClick = true
 
     private var monitors: [Any] = []
     private var lastPromiseChangeCount: Int?
@@ -24,7 +33,18 @@ final class DragController {
         stop()
         let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .flagsChanged, .keyDown]
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            self?.handle(event)
+            guard let self else { return }
+            switch event.type {
+            case .leftMouseDown:
+                self.typedSinceClick = false
+                self.onGlobalMouseDown?()
+            case .keyDown:
+                self.typedSinceClick = true
+                self.onGlobalKeyDown?(self.monitorKey(from: event))
+            default:
+                break
+            }
+            self.handle(event)
         }) {
             monitors.append(monitor)
         }
@@ -63,6 +83,8 @@ final class DragController {
                 onWheelKey?(key)
             case .dragBegan:
                 break
+            case let .idleTap(kind):
+                onIdleTap?(kind)
             }
         }
     }

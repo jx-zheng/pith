@@ -12,6 +12,12 @@ enum PithTheme {
     static let segmentCorner: CGFloat = 18
     static let panelPadding: CGFloat = 36
 
+    /// Glass transparency. Lower = more see-through.
+    static let segmentBlurOpacity: Double = 0.55
+    static let segmentTintOpacity: Double = 0.30
+    static let segmentSheenOpacity: Double = 0.08
+    static let highlightOpacity: Double = 0.88
+
     /// #EB4420
     static let highlight = Color(red: 235 / 255, green: 68 / 255, blue: 32 / 255)
     /// Slightly deeper press color for buttons.

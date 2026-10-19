@@ -304,7 +304,16 @@ final class ConversionCenter: ObservableObject {
         return id
     }
 
+    /// Conversions run on background tasks; job state and every UI callback live on main.
+    private func onMain(_ work: @escaping () -> Void) {
+        if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
+    }
+
     private func update(job id: UUID, title: String, subtitle: String, progress: Double) {
+        onMain { self.updateOnMain(job: id, title: title, subtitle: subtitle, progress: progress) }
+    }
+
+    private func updateOnMain(job id: UUID, title: String, subtitle: String, progress: Double) {
         guard let index = jobs.firstIndex(where: { $0.id == id }) else { return }
         jobs[index].title = title
         jobs[index].subtitle = subtitle
@@ -313,6 +322,13 @@ final class ConversionCenter: ObservableObject {
     }
 
     private func finishJob(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool) {
+        onMain { self.finishJobOnMain(id, title: title, subtitle: subtitle, paths: paths, success: success) }
+    }
+
+    private func finishJobOnMain(_ id: UUID, title: String, subtitle: String, paths: [URL], success: Bool) {
+        if success, let anchor = jobs.first(where: { $0.id == id })?.anchor {
+            FinderPlacement.place(paths, at: anchor)
+        }
         runners[id] = nil
         jobs.removeAll { $0.id == id }
         onJobsChanged?(jobs)
