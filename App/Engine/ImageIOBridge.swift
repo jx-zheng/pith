@@ -1,5 +1,6 @@
 import AppKit
 import CoreGraphics
+import CoreImage
 import Foundation
 import ImageIO
 import PithCore
@@ -12,7 +13,10 @@ enum ImageIOBridge {
         guard let src = CGImageSourceCreateWithURL(source as CFURL, nil) else {
             throw ConversionFailure.unreadable("Couldn't read \(source.lastPathComponent).")
         }
-        let count = max(1, CGImageSourceGetCount(src))
+        // Only GIF and TIFF carry every frame/page; JPEG, BMP and the rest take the first one.
+        // (Asking a single-image format for N images makes the destination fail to create.)
+        let frames = max(1, CGImageSourceGetCount(src))
+        let count = Self.multiFrameUTIs.contains(uti) ? frames : 1
         guard let dest = CGImageDestinationCreateWithURL(destination as CFURL, uti as CFString, count, nil) else {
             throw ConversionFailure.unsupported("This Mac's ImageIO can't write .\(destination.pathExtension).")
         }
@@ -26,6 +30,13 @@ enum ImageIOBridge {
         guard CGImageDestinationFinalize(dest) else {
             throw ConversionFailure.writeFailed("ImageIO couldn't write \(destination.lastPathComponent).")
         }
+    }
+
+    static let multiFrameUTIs: Set<String> = [FileTypes.gif.uti, FileTypes.tiff.uti]
+
+    /// Whether this Mac's ImageIO can encode `uti` (AVIF on macOS 15+, never WebP).
+    static func canWrite(_ uti: String) -> Bool {
+        (CGImageDestinationCopyTypeIdentifiers() as? [String] ?? []).contains(uti)
     }
 
     static func scaled(_ image: CGImage, maxEdge: Int) -> CGImage {
@@ -105,13 +116,9 @@ enum ImageIOBridge {
 
 enum ImageComposer {
     static func crop(_ image: CGImage, to rect: PixelRect) throws -> CGImage {
-        let flipped = CGRect(
-            x: rect.x,
-            y: image.height - rect.y - rect.height,
-            width: rect.width,
-            height: rect.height
-        )
-        guard let cropped = image.cropping(to: flipped) else {
+        // PixelRect and CGImage.cropping(to:) are both top-left based; no flip.
+        let area = CGRect(x: rect.x, y: rect.y, width: rect.width, height: rect.height)
+        guard let cropped = image.cropping(to: area) else {
             throw ConversionFailure.writeFailed("The crop rectangle is outside the image.")
         }
         return cropped
@@ -255,10 +262,15 @@ enum AnnotationRenderer {
                     .font: NSFont.systemFont(ofSize: max(18, mark.width * 8), weight: .semibold),
                     .foregroundColor: NSColor(calibratedRed: mark.color.r, green: mark.color.g, blue: mark.color.b, alpha: 1)
                 ]
+                // NSString draws into NSGraphicsContext.current, which is nil here, so wrap this
+                // bitmap context. Flip it so the text hangs down from its top-left anchor, upright.
                 context.saveGState()
                 context.translateBy(x: origin.x, y: origin.y)
                 context.scaleBy(x: 1, y: -1)
+                NSGraphicsContext.saveGraphicsState()
+                NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
                 (mark.text as NSString).draw(at: .zero, withAttributes: attributes)
+                NSGraphicsContext.restoreGraphicsState()
                 context.restoreGState()
             }
         }
@@ -278,5 +290,25 @@ enum AnnotationRenderer {
             context.fill(flipped)
         }
         return context.makeImage()
+    }
+}
+
+/// Edit tool: brightness, contrast, saturation and sharpness via Core Image.
+enum ImageAdjust {
+    static func render(_ image: CGImage, brightness: Double, contrast: Double, saturation: Double, sharpness: Double) -> CGImage? {
+        let ci = CIImage(cgImage: image)
+        guard let controls = CIFilter(name: "CIColorControls") else { return image }
+        controls.setValue(ci, forKey: kCIInputImageKey)
+        controls.setValue(brightness, forKey: kCIInputBrightnessKey)
+        controls.setValue(contrast, forKey: kCIInputContrastKey)
+        controls.setValue(saturation, forKey: kCIInputSaturationKey)
+        var output = controls.outputImage
+        if sharpness > 0.01, let sharpen = CIFilter(name: "CISharpenLuminance") {
+            sharpen.setValue(output, forKey: kCIInputImageKey)
+            sharpen.setValue(sharpness, forKey: "inputSharpness")
+            output = sharpen.outputImage
+        }
+        guard let output else { return image }
+        return CIContext().createCGImage(output, from: output.extent)
     }
 }

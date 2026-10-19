@@ -262,20 +262,7 @@ struct AdjustEditor: View {
     private var preview: CGImage { rendered() ?? image }
 
     private func rendered() -> CGImage? {
-        let ci = CIImage(cgImage: image)
-        guard let controls = CIFilter(name: "CIColorControls") else { return image }
-        controls.setValue(ci, forKey: kCIInputImageKey)
-        controls.setValue(brightness, forKey: kCIInputBrightnessKey)
-        controls.setValue(contrast, forKey: kCIInputContrastKey)
-        controls.setValue(saturation, forKey: kCIInputSaturationKey)
-        var output = controls.outputImage
-        if sharpness > 0.01, let sharpen = CIFilter(name: "CISharpenLuminance") {
-            sharpen.setValue(output, forKey: kCIInputImageKey)
-            sharpen.setValue(sharpness, forKey: "inputSharpness")
-            output = sharpen.outputImage
-        }
-        guard let output else { return image }
-        return CIContext().createCGImage(output, from: output.extent)
+        ImageAdjust.render(image, brightness: brightness, contrast: contrast, saturation: saturation, sharpness: sharpness)
     }
 
     private func reset() {

@@ -135,13 +135,15 @@ public enum FFmpegScripts {
         }
         pass1.append(contentsOf: ["-vf", filterPrefix + ",palettegen", "-frames:v", "1", palettePath])
 
-        var pass2 = ["-y", "-hide_banner", "-nostats", "-i", input, "-i", palettePath]
+        // Trim options go before the first `-i` so they apply to that input.
+        var pass2 = ["-y", "-hide_banner", "-nostats"]
         if let trim {
-            pass2.insert(contentsOf: ["-ss", formatSeconds(trim.startSeconds)], at: 4)
+            pass2.append(contentsOf: ["-ss", formatSeconds(trim.startSeconds)])
             if let end = trim.endSeconds {
-                pass2.insert(contentsOf: ["-to", formatSeconds(end)], at: 6)
+                pass2.append(contentsOf: ["-to", formatSeconds(end)])
             }
         }
+        pass2.append(contentsOf: ["-i", input, "-i", palettePath])
         pass2.append(contentsOf: [
             "-lavfi", "\(filterPrefix)[x];[x][1:v]paletteuse",
             "-progress", "pipe:1",
@@ -151,6 +153,24 @@ public enum FFmpegScripts {
             CommandSpec(executable: ffmpeg, arguments: pass1, progressOnStdout: false),
             CommandSpec(executable: ffmpeg, arguments: pass2, progressOnStdout: true)
         ]
+    }
+
+    /// Single still image (WebP, AVIF). `input` is a PNG that ImageIO decoded and oriented,
+    /// because ffmpeg can't read HEIC grids or apply EXIF orientation.
+    public static func still(ffmpeg: String, input: String, output: String, outputType: FileType, quality: Double?) -> CommandSpec {
+        var args = ["-y", "-hide_banner", "-v", "error", "-i", input]
+        switch outputType.family {
+        case "webp":
+            let q = Int(((quality ?? 0.8) * 100).rounded())
+            args += ["-c:v", "libwebp", "-quality", String(min(100, max(1, q)))]
+        case "avif":
+            let crf = Int(((1 - (quality ?? 0.6)) * 63).rounded())
+            args += ["-c:v", "libaom-av1", "-still-picture", "1", "-crf", String(min(63, max(0, crf)))]
+        default:
+            break
+        }
+        args += ["-frames:v", "1", output]
+        return CommandSpec(executable: ffmpeg, arguments: args, progressOnStdout: false)
     }
 
     public static func probe(ffprobe: String, input: String) -> CommandSpec {

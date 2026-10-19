@@ -49,6 +49,26 @@ final class CommandTests: XCTestCase {
         XCTAssertEqual(passes[1].progressOnStdout, true)
     }
 
+    func testGIFTrimKeepsInputPathNextToDashI() {
+        let passes = FFmpegScripts.gif(ffmpeg: "ffmpeg", input: "/tmp/clip.mp4", output: "/tmp/clip.gif", palettePath: "/tmp/p.png",
+                                       fps: 12, maxWidth: 480, trim: TrimRange(startSeconds: 1, endSeconds: 2))
+        for pass in passes {
+            for (index, arg) in pass.arguments.enumerated() where arg == "-i" {
+                XCTAssertFalse(pass.arguments[index + 1].hasPrefix("-"), "\(pass.arguments)")
+            }
+        }
+        XCTAssertTrue(passes[1].arguments.contains("-ss"))
+        XCTAssertTrue(passes[1].arguments.contains("-to"))
+    }
+
+    func testStillImageArguments() {
+        let webp = FFmpegScripts.still(ffmpeg: "f", input: "/t/a.png", output: "/t/a.webp", outputType: FileTypes.webp, quality: 0.9)
+        XCTAssertEqual(webp.arguments, ["-y", "-hide_banner", "-v", "error", "-i", "/t/a.png", "-c:v", "libwebp", "-quality", "90", "-frames:v", "1", "/t/a.webp"])
+        let avif = FFmpegScripts.still(ffmpeg: "f", input: "/t/a.png", output: "/t/a.avif", outputType: FileTypes.avif, quality: nil)
+        XCTAssertTrue(avif.arguments.contains("libaom-av1"))
+        XCTAssertFalse(avif.arguments.contains("libx264"))
+    }
+
     func testAudioExtractionDropsVideo() {
         let spec = FFmpegScripts.transcode(
             ffmpeg: "ffmpeg",
@@ -95,7 +115,15 @@ final class CommandTests: XCTestCase {
             from: FileTypes.docx,
             to: FileTypes.markdown
         )
-        XCTAssertEqual(spec?.arguments, ["--from", "docx", "--to", "markdown", "--output", "/tmp/Notes.md", "/tmp/Notes.docx"])
+        XCTAssertEqual(spec?.arguments, ["--from", "docx", "--to", "markdown", "--standalone", "--output", "/tmp/Notes.md", "/tmp/Notes.docx"])
+        // Pandoc has no plain-text reader: TXT is read as wrapped HTML. PDF can't be read at all.
+        XCTAssertEqual(PandocScripts.convert(pandoc: "p", input: "/t/a.html", output: "/t/a.md", from: FileTypes.text, to: FileTypes.markdown)?.arguments.prefix(2), ["--from", "html"])
+        XCTAssertNil(PandocScripts.convert(pandoc: "p", input: "/t/a.pdf", output: "/t/a.docx", from: FileTypes.pdf, to: FileTypes.docx))
+        let html = PandocScripts.plainTextAsHTML("a <b> & *c*\nline\n\npara 2")
+        XCTAssertTrue(html.contains("<p>a &lt;b&gt; &amp; *c*<br>\nline</p>"))
+        XCTAssertTrue(html.contains("<p>para 2</p>"))
+        let rtf = PandocScripts.convert(pandoc: "p", input: "/t/a.md", output: "/t/a.html", from: FileTypes.markdown, to: FileTypes.html)
+        XCTAssertTrue(rtf?.arguments.contains("pagetitle=a") == true)
         let office = SofficeScripts.convert(
             soffice: "/Applications/LibreOffice.app/Contents/MacOS/soffice",
             input: "/tmp/Deck.pptx",
@@ -103,6 +131,10 @@ final class CommandTests: XCTestCase {
             format: "pdf"
         )
         XCTAssertTrue(office.arguments.contains("--headless"))
+        XCTAssertFalse(office.arguments.contains { $0.hasPrefix("--infilter") })
+        let pdfImport = SofficeScripts.convert(soffice: "s", input: "/t/a.pdf", outputDirectory: "/t", format: "docx",
+                                               infilter: SofficeScripts.importFilter(input: FileTypes.pdf, outputFormat: "docx"))
+        XCTAssertTrue(pdfImport.arguments.contains("--infilter=writer_pdf_import"))
         XCTAssertTrue(office.arguments.contains("--convert-to"))
         XCTAssertEqual(
             SofficeScripts.expectedOutput(input: "/tmp/Deck.pptx", outputDirectory: "/tmp/out", format: "pdf"),

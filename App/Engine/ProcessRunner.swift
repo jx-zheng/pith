@@ -20,9 +20,9 @@ final class ProcessRunner: @unchecked Sendable {
             process.executableURL = URL(fileURLWithPath: spec.executable)
             process.arguments = spec.arguments
             let stdout = Pipe()
-            let stderr = Pipe()
             process.standardOutput = stdout
-            process.standardError = stderr
+            // Nobody reads stderr here; an undrained pipe blocks the tool once it fills (64 KB).
+            process.standardError = FileHandle.nullDevice
             let buffer = LineBuffer()
             stdout.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
@@ -32,8 +32,9 @@ final class ProcessRunner: @unchecked Sendable {
             let once = ResumeOnce(continuation)
             process.terminationHandler = { proc in
                 stdout.fileHandleForReading.readabilityHandler = nil
-                let trailing = buffer.flush()
-                trailing.forEach(onStdout)
+                // Whatever was still in the pipe at exit.
+                buffer.append(stdout.fileHandleForReading.readDataToEndOfFile()).forEach(onStdout)
+                buffer.flush().forEach(onStdout)
                 once.resume(returning: proc.terminationStatus)
             }
             do {
@@ -62,7 +63,7 @@ final class ProcessRunner: @unchecked Sendable {
             process.standardOutput = stdout
             process.standardError = stderr
             let outBuffer = LineBuffer()
-            let errBuffer = LineBuffer()
+            let errBuffer = TailBuffer()
             stdout.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
@@ -71,14 +72,17 @@ final class ProcessRunner: @unchecked Sendable {
             stderr.fileHandleForReading.readabilityHandler = { handle in
                 let data = handle.availableData
                 guard !data.isEmpty else { return }
-                _ = errBuffer.append(data)
+                errBuffer.append(data)
             }
             let once = ResumeOnce(continuation)
             process.terminationHandler = { proc in
                 stdout.fileHandleForReading.readabilityHandler = nil
                 stderr.fileHandleForReading.readabilityHandler = nil
+                // Drain what the handlers hadn't read yet, or the last lines (often the error) are lost.
+                outBuffer.append(stdout.fileHandleForReading.readDataToEndOfFile()).forEach(onStdout)
+                errBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
                 outBuffer.flush().forEach(onStdout)
-                let err = errBuffer.flush().joined(separator: "\n")
+                let err = errBuffer.text
                 once.resume(returning: (proc.terminationStatus, err))
             }
             do {
@@ -91,9 +95,33 @@ final class ProcessRunner: @unchecked Sendable {
                 }
                 self.lock.unlock()
             } catch {
+                stdout.fileHandleForReading.readabilityHandler = nil
+                stderr.fileHandleForReading.readabilityHandler = nil
                 once.resume(throwing: error)
             }
         }
+    }
+}
+
+/// Keeps the last `limit` bytes of stderr. (A LineBuffer here handed back each completed
+/// line and kept only the unterminated remainder, so error text was almost always empty.)
+private final class TailBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    private let limit = 64 * 1024
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        if data.count > limit { data.removeFirst(data.count - limit) }
+        lock.unlock()
+    }
+
+    var text: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 

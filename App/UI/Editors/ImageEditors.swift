@@ -5,12 +5,13 @@ import PithCore
 struct CropEditor: View {
     var image: CGImage
     var onClose: () -> Void
-    var onApply: (CGImage) -> Void
+    /// Receives the crop rectangle; the engine crops and saves.
+    var onApply: (PixelRect) -> Void
 
     @State private var aspect: AspectPreset = .free
     @State private var crop: PixelRect
 
-    init(image: CGImage, onClose: @escaping () -> Void, onApply: @escaping (CGImage) -> Void) {
+    init(image: CGImage, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void) {
         self.image = image
         self.onClose = onClose
         self.onApply = onApply
@@ -71,9 +72,7 @@ struct CropEditor: View {
     }
 
     private func apply() {
-        if let cropped = try? ImageComposer.crop(image, to: crop) {
-            onApply(cropped)
-        }
+        onApply(crop)
     }
 }
 
