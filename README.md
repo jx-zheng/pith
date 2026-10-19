@@ -75,6 +75,16 @@ The panel is a borderless non-activating `NSPanel` (floating, all spaces, transp
 
 Image and PDF conversion do not need Homebrew. Everything else degrades: the segment stays on the wheel, dimmed, and the centre pill shows the install line.
 
+### One-step install
+
+```sh
+scripts/install.sh          # tools + build + install + launch
+scripts/install.sh --deps   # just ffmpeg, ffprobe, pandoc, LibreOffice
+scripts/install.sh --app    # just build and install Pith
+```
+
+The script uses Homebrew when the current user owns it. Otherwise it installs per user: ffmpeg, ffprobe and pandoc go to `~/.local/bin`, and LibreOffice goes to `~/Applications`. Pith looks in both places.
+
 ### Homebrew
 
 ```bash
