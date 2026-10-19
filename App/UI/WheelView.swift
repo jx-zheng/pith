@@ -128,6 +128,8 @@ struct WheelView: View {
 
 struct WheelContainer: View {
     @ObservedObject var model: WheelModel
+    /// Re-renders the wheel when the accent theme changes.
+    @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
 
     var body: some View {
         ZStack {
