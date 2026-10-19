@@ -15,8 +15,8 @@ enum PithTheme {
     static let panelPadding: CGFloat = 36
 
     /// Glass transparency: lower values show more of what's behind the wheel.
-    static let segmentGlassOpacity: Double = 0.44
-    static let segmentTintOpacity: Double = 0.16
+    static let segmentGlassOpacity: Double = 0.58
+    static let segmentTintOpacity: Double = 0.2
     static let segmentSheenOpacity: Double = 0.06
     static let highlightOpacity: Double = 0.88
 
