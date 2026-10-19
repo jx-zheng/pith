@@ -49,7 +49,7 @@ struct SettingsView: View {
                 favouritePicker("Convert", kind: .convert, selection: $favConvert)
                 favouritePicker("Tools", kind: .tools, selection: $favTools)
                 favouritePicker("Actions", kind: .actions, selection: $favActions)
-                caption("Double-tap a wheel's key to run its favourite straight away, with no aiming. It fires only when that segment is on the wheel and enabled for the file. Undo the last conversion with ⌃⌥⌘Z.")
+                caption("Double-tap a wheel's key to run its favourite straight away, with no aiming. It fires only when that segment is on the wheel and enabled for the file. Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
             }
             Section("Output") {
                 Picker("Location", selection: locationBinding) {

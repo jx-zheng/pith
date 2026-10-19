@@ -156,11 +156,23 @@ enum ImageComposer {
             width: image.width,
             height: image.height
         )
+        let radius = min(max(0, cornerRadius), min(imageRect.width, imageRect.height) / 2)
+        let card = CGPath(roundedRect: imageRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+        // Shadow pass: fill the card shape with the shadow on. It must happen before any clip,
+        // because a clip to the card would cut the shadow (which lies outside it) away entirely.
+        if shadowRadius > 0 {
+            context.saveGState()
+            context.setShadow(offset: CGSize(width: 0, height: -shadowRadius * 0.35), blur: shadowRadius, color: CGColor(gray: 0, alpha: 0.45))
+            context.addPath(card)
+            context.setFillColor(CGColor(gray: 0, alpha: 1))
+            context.fillPath()
+            context.restoreGState()
+        }
         context.saveGState()
-        context.setShadow(offset: CGSize(width: 0, height: -shadowRadius * 0.25), blur: shadowRadius, color: CGColor(gray: 0, alpha: 0.28))
-        let card = CGPath(roundedRect: imageRect, cornerWidth: cornerRadius, cornerHeight: cornerRadius, transform: nil)
         context.addPath(card)
         context.clip()
+        // Clear the black shadow-caster under the image so transparent pixels show the background.
+        draw(background, in: context, rect: canvasRect)
         context.draw(image, in: imageRect)
         context.restoreGState()
         return context.makeImage()

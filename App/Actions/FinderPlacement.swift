@@ -1,59 +1,38 @@
 import AppKit
 
-/// Moves freshly written files' Finder icons to the point where the user let go.
+/// Moves freshly written files' Finder icons: to the drop point, or next to the source's icon.
 /// Works on the Desktop and in icon-view Finder windows that aren't auto-arranged;
 /// anywhere else Finder ignores the request and keeps its own placement.
 enum FinderPlacement {
-    /// - Parameter screenPoint: Cocoa global coordinates (origin bottom-left of the main screen).
-    static func place(_ files: [URL], at screenPoint: CGPoint) {
-        guard !files.isEmpty, let main = NSScreen.screens.first else { return }
-        // Finder uses a top-left origin anchored to the main screen.
-        let x = Int(screenPoint.x.rounded())
-        let y = Int((main.frame.maxY - screenPoint.y).rounded())
-        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first?.standardizedFileURL.path
-        var lines: [String] = ["tell application \"Finder\""]
-        for (offset, file) in files.enumerated() {
-            let px = x + offset * 90
-            let path = escape(file.path)
-            let parent = file.deletingLastPathComponent().standardizedFileURL.path
-            if parent == desktop {
-                lines.append("""
-                try
-                    set desktop position of (POSIX file "\(path)" as alias) to {\(px), \(y)}
-                end try
-                """)
-            } else {
-                lines.append("""
-                try
-                    set theItem to (POSIX file "\(path)" as alias)
-                    set theParent to (POSIX file "\(escape(parent))" as alias)
-                    repeat with w in (every Finder window)
-                        try
-                            if ((target of w) as alias) is theParent and (current view of w) is icon view then
-                                set b to bounds of w
-                                set sb to toolbar visible of w
-                                set topInset to 28
-                                if sb then set topInset to 92
-                                set position of item (name of (info for theItem)) of (target of w) to {\(px) - (item 1 of b), \(y) - (item 2 of b) - topInset}
-                                exit repeat
-                            end if
-                        end try
-                    end repeat
-                end try
-                """)
-            }
+    static func place(_ files: [URL], target: PlacementTarget) {
+        guard let main = NSScreen.screens.first else { return }
+        let desktop = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first?.path ?? (NSHomeDirectory() + "/Desktop")
+        guard let source = PlacementPlan.script(files: files, target: target, desktopPath: desktop, mainScreenMaxY: main.frame.maxY) else { return }
+        let expected: Int
+        if case let .besideSource(origin) = target {
+            expected = PlacementPlan.filesBeside(origin, among: files).count
+        } else {
+            expected = files.count
         }
-        lines.append("end tell")
-        let source = lines.joined(separator: "\n")
-        // Give Finder a moment to notice the new file before moving its icon.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
-            var error: NSDictionary?
-            NSAppleScript(source: source)?.executeAndReturnError(&error)
-            if let error { NSLog("Pith: placement failed: %@", error) }
-        }
+        // Finder needs a moment to notice a new file before it will move its icon. If it hasn't
+        // by the first pass, try once more; setting the same position twice is harmless.
+        run(source, after: 0.6, expected: expected, retries: 1)
     }
 
-    private static func escape(_ s: String) -> String {
-        s.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    /// - Parameter screenPoint: Cocoa global coordinates (origin bottom-left of the main screen).
+    static func place(_ files: [URL], at screenPoint: CGPoint) {
+        place(files, target: .dropPoint(screenPoint))
+    }
+
+    private static func run(_ source: String, after delay: Double, expected: Int, retries: Int) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            var error: NSDictionary?
+            let result = NSAppleScript(source: source)?.executeAndReturnError(&error)
+            if let error { NSLog("Pith: placement failed: %@", error) }
+            let placed = Int(result?.int32Value ?? 0)
+            if placed < expected, retries > 0 {
+                run(source, after: 1.0, expected: expected, retries: retries - 1)
+            }
+        }
     }
 }

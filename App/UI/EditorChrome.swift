@@ -8,6 +8,8 @@ struct EditorChrome<Content: View>: View {
     var onClose: () -> Void
     var onReset: () -> Void
     var onPrimary: () -> Void
+    /// When set, a "Save and Replace" button sits next to the primary (which should read "Save as New").
+    var replace: ReplaceButton? = nil
     @ViewBuilder var content: () -> Content
 
     var body: some View {
@@ -39,6 +41,13 @@ struct EditorChrome<Content: View>: View {
                 Button("Reset", action: onReset)
                     .buttonStyle(PithQuietButtonStyle())
                 Spacer()
+                if let replace {
+                    Button("Save and Replace", action: replace.action)
+                        .buttonStyle(PithQuietButtonStyle())
+                        .disabled(replace.blocker != nil)
+                        .opacity(replace.blocker == nil ? 1 : 0.45)
+                        .help(replace.blocker ?? "Overwrite the original in place. Undo with ⌃⌥⌘Z, or ⌘Z in Finder within 5 seconds.")
+                }
                 Button(primaryTitle, action: onPrimary)
                     .buttonStyle(PithPrimaryButtonStyle())
             }
@@ -51,6 +60,13 @@ struct EditorChrome<Content: View>: View {
             PithTheme.windowWash.opacity(0.18)
         }
     }
+}
+
+/// The secondary editor action that overwrites the source file.
+struct ReplaceButton {
+    /// Why replacing isn't possible for this file (shown as the tooltip), or nil when it is.
+    var blocker: String?
+    var action: () -> Void
 }
 
 struct PithPrimaryButtonStyle: ButtonStyle {

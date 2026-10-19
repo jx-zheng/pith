@@ -35,6 +35,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let doubleTapWindow: TimeInterval = 0.45
     private var wheelShownAt = Date.distantPast
     private var undoMonitors: [Any] = []
+    private let undoTap = UndoKeyTap()
+    private var undoTapRetry: Timer?
     /// Wheel opened from a Finder selection (no drag); segments are clicked, not dropped on.
     private var clickMode = false
 
@@ -127,11 +129,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.recentProvider = { [weak self] in self?.center.recent ?? [] }
         menu.hasJobsProvider = { [weak self] in self?.center.jobs.isEmpty == false }
         menu.onRevealRecent = { item in
-            QuickLookPresenter.shared.show(paths: item.outputPaths)
+            QuickLookPresenter.shared.show(paths: item.outputPaths.isEmpty ? (item.replaced ?? []).map(\.original) : item.outputPaths)
         }
         menu.onCancelJobs = { [weak self] in self?.center.cancelAll() }
         menu.onUndo = { [weak self] in self?.undoLastConversion() }
         installUndoHotKey()
+        installUndoTap()
         menu.onSettings = { [weak self] in self?.showSettings() }
         menu.onQuit = { NSApp.terminate(nil) }
         menu.onPromptAccessibility = { [weak self] in
@@ -270,10 +273,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func undoLastConversion() {
+        let entryDate = RecentLog.nextUndoable(center.recent)?.date
         if let message = center.undoLast() {
-            center.flash(title: "Undid last conversion", subtitle: message)
+            // Whatever route undid it, ⌘Z in Finder must not undo the next-older entry as well.
+            undoTap.noteUndone(entryDate: entryDate)
+            center.flash(title: "Undone", subtitle: message)
         } else {
             NSSound.beep()
+        }
+    }
+
+    /// Plain ⌘Z in Finder within `UndoShortcut.window` of a Pith entry. Needs Accessibility,
+    /// which may arrive after launch, so keep trying until macOS grants the tap.
+    private func installUndoTap() {
+        undoTap.newestEntryDate = { [weak self] in
+            self.flatMap { RecentLog.nextUndoable($0.center.recent)?.date }
+        }
+        undoTap.onUndo = { [weak self] in self?.undoLastConversion() }
+        guard !undoTap.install() else { return }
+        undoTapRetry = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] timer in
+            guard let self else { timer.invalidate(); return }
+            if self.undoTap.install() { timer.invalidate(); self.undoTapRetry = nil }
         }
     }
 
@@ -370,20 +390,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             options: nil
         ) as? [NSFilePromiseReceiver] ?? []
         let anchor = NSEvent.mouseLocation
+        // A click on the wheel (Finder selection, no drag) says nothing about where the file
+        // should go, so those outputs sit next to the source's icon instead.
+        let drop: CGPoint? = clickMode ? nil : anchor
         let kind = self.kind
         let built = self.built
         drag.noteDropAccepted()
         dismissWheel()
         if !paths.isEmpty {
-            perform(kind: kind, built: built, index: index, urls: paths.map { URL(fileURLWithPath: $0) }, anchor: anchor)
+            perform(kind: kind, built: built, index: index, urls: paths.map { URL(fileURLWithPath: $0) }, anchor: anchor, drop: drop)
             return
         }
         DragPasteboardReader.beginReceive(receivers) { [weak self] urls in
-            self?.perform(kind: kind, built: built, index: index, urls: urls, anchor: anchor)
+            self?.perform(kind: kind, built: built, index: index, urls: urls, anchor: anchor, drop: drop)
         }
     }
 
-    private func perform(kind: WheelKind, built: WheelContents.Built?, index: Int, urls: [URL], anchor: CGPoint) {
+    private func perform(kind: WheelKind, built: WheelContents.Built?, index: Int, urls: [URL], anchor: CGPoint, drop: CGPoint?) {
         guard let built else { return }
         guard !urls.isEmpty else {
             Notifier.shared.post(title: "Nothing to convert", body: "The drag did not include a file Pith could read.", paths: [])
@@ -394,10 +417,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch kind {
         case .convert:
             guard built.offers.indices.contains(index) else { return }
-            center.convert(urls: urls, offer: built.offers[index], anchor: anchor)
+            center.convert(urls: urls, offer: built.offers[index], anchor: anchor, drop: drop)
         case .tools:
             guard built.tools.indices.contains(index) else { return }
-            center.runTool(built.tools[index].tool, urls: urls)
+            center.runTool(built.tools[index].tool, urls: urls, drop: drop)
         case .actions:
             guard built.actions.indices.contains(index) else { return }
             FileActions.perform(built.actions[index], urls: urls)
@@ -469,10 +492,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .crop(url):
             presentWindow(size: NSSize(width: 760, height: 860)) { close in
                 self.imageEditor(url, close: close) { image, close in
-                    CropEditor(image: image, onClose: close) { rect in
+                    CropEditor(image: image, onClose: close, onApply: { rect in
                         self.save(source: url) { try $0.crop(image, source: url, to: rect) }
                         close()
-                    }
+                    }, onReplace: { rect in
+                        self.replace(source: url) { try $0.cropReplacing(image, source: url, to: rect) }
+                        close()
+                    }, replaceBlocker: ReplaceStore.blocker(for: url))
                 }
             }
         case let .addBackground(url):
@@ -487,37 +513,49 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         case let .annotate(url):
             presentWindow(size: NSSize(width: 760, height: 820)) { close in
                 self.imageEditor(url, close: close) { image, close in
-                    AnnotateEditor(image: image, onClose: close) { marked in
+                    AnnotateEditor(image: image, onClose: close, onApply: { marked in
                         self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Annotated") }
                         close()
-                    }
+                    }, onReplace: { marked in
+                        self.replace(source: url) { try $0.replaceOriginal(marked, source: url) }
+                        close()
+                    }, replaceBlocker: ReplaceStore.blocker(for: url))
                 }
             }
         case let .redact(url):
             presentWindow(size: NSSize(width: 760, height: 820)) { close in
                 self.imageEditor(url, close: close) { image, close in
-                    RedactEditor(image: image, onClose: close) { marked in
+                    RedactEditor(image: image, onClose: close, onApply: { marked in
                         self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Redacted") }
                         close()
-                    }
+                    }, onReplace: { marked in
+                        self.replace(source: url) { try $0.replaceOriginal(marked, source: url) }
+                        close()
+                    }, replaceBlocker: ReplaceStore.blocker(for: url))
                 }
             }
         case let .adjust(url):
             presentWindow(size: NSSize(width: 720, height: 780)) { close in
                 self.imageEditor(url, close: close) { image, close in
-                    AdjustEditor(image: image, onClose: close) { edited in
+                    AdjustEditor(image: image, onClose: close, onApply: { edited in
                         self.save(source: url) { try $0.saveKeepingFormat(edited, source: url, suffix: " Edited") }
                         close()
-                    }
+                    }, onReplace: { edited in
+                        self.replace(source: url) { try $0.replaceOriginal(edited, source: url) }
+                        close()
+                    }, replaceBlocker: ReplaceStore.blocker(for: url))
                 }
             }
         case let .metadata(url):
             let rows = ImageIOBridge.properties(of: url)
             presentWindow(size: NSSize(width: 560, height: 640)) { close in
-                MetadataEditor(source: url, rows: rows, onClose: close) {
+                MetadataEditor(source: url, rows: rows, onClose: close, onStrip: {
                     self.save(source: url) { try $0.stripMetadata(url) }
                     close()
-                }
+                }, onStripReplacing: {
+                    self.replace(source: url) { try $0.stripMetadataReplacing(url) }
+                    close()
+                }, replaceBlocker: ReplaceStore.blocker(for: url))
             }
         case let .compress(urls):
             guard let url = urls.first else { return }
@@ -589,6 +627,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             center.recordSaved(try work(center.engine), source: source)
         } catch {
             Notifier.shared.post(title: "Couldn't save", body: error.localizedDescription, paths: [])
+        }
+    }
+
+    /// Save and Replace: overwrite the source in place (backed up for undo).
+    private func replace(source: URL, _ work: (ConversionEngine) throws -> ReplacedFile) {
+        pushSettings()
+        do {
+            center.recordReplaced(try work(center.engine), source: source)
+        } catch {
+            Notifier.shared.post(title: "Couldn't replace \(source.lastPathComponent)", body: error.localizedDescription, paths: [])
         }
     }
 
