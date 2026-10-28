@@ -5,10 +5,30 @@ import PithCore
 
 struct AnnotateEditor: View {
     var image: CGImage
+    var pixelWidth: Int
+    var pixelHeight: Int
     var onClose: () -> Void
-    var onApply: (CGImage) -> Void
-    var onReplace: ((CGImage) -> Void)? = nil
+    var onApply: ([AnnotationMark]) -> Void
+    var onReplace: (([AnnotationMark]) -> Void)? = nil
     var replaceBlocker: String? = nil
+
+    init(
+        image: CGImage,
+        pixelWidth: Int? = nil,
+        pixelHeight: Int? = nil,
+        onClose: @escaping () -> Void,
+        onApply: @escaping ([AnnotationMark]) -> Void,
+        onReplace: (([AnnotationMark]) -> Void)? = nil,
+        replaceBlocker: String? = nil
+    ) {
+        self.image = image
+        self.pixelWidth = pixelWidth ?? image.width
+        self.pixelHeight = pixelHeight ?? image.height
+        self.onClose = onClose
+        self.onApply = onApply
+        self.onReplace = onReplace
+        self.replaceBlocker = replaceBlocker
+    }
 
     @State private var marks: [AnnotationMark] = []
     @State private var draft: [CGPoint] = []
@@ -58,13 +78,18 @@ struct AnnotateEditor: View {
 
     private var canvas: some View {
         GeometryReader { geo in
-            let fitted = fit(geo.size)
+            let fitted = MarkupViewport.fit(pixelWidth: pixelWidth, pixelHeight: pixelHeight, in: geo.size)
+            let viewport = MarkupViewport(fitted: fitted, pixelWidth: CGFloat(pixelWidth), pixelHeight: CGFloat(pixelHeight))
             ZStack {
-                Image(decorative: rendered, scale: 1)
+                Image(decorative: image, scale: 1)
                     .resizable()
                     .interpolation(.high)
                     .frame(width: fitted.width, height: fitted.height)
                     .position(x: fitted.midX, y: fitted.midY)
+                Canvas { context, _ in
+                    draw(liveMarks(), in: &context, viewport: viewport)
+                }
+                .allowsHitTesting(false)
             }
             .contentShape(Rectangle())
             .gesture(DragGesture(minimumDistance: 0).onChanged { value in
@@ -86,18 +111,63 @@ struct AnnotateEditor: View {
         }
     }
 
-    private var rendered: CGImage {
+    private func liveMarks() -> [AnnotationMark] {
         var live = marks
         if draft.count > 1 {
             let stored = tool == .arrow ? [draft[0], draft[draft.count - 1]] : draft
             live.append(AnnotationMark(kind: tool, points: stored, text: "", color: color, width: width))
         }
-        return AnnotationRenderer.render(base: image, marks: live) ?? image
+        return live
     }
 
-    private func apply(_ handler: (CGImage) -> Void) {
-        if let image = AnnotationRenderer.render(base: image, marks: marks) {
-            handler(image)
+    /// Marks stay in full-image pixels until Save. `AnnotationRenderer` runs once, on the full-resolution image.
+    private func apply(_ handler: ([AnnotationMark]) -> Void) {
+        handler(marks)
+    }
+
+    private func draw(_ marks: [AnnotationMark], in context: inout GraphicsContext, viewport: MarkupViewport) {
+        for mark in marks {
+            let color = Color(red: mark.color.r, green: mark.color.g, blue: mark.color.b)
+            switch mark.kind {
+            case .pen:
+                let points = mark.points.map { viewport.viewPoint($0) }
+                guard let first = points.first else { continue }
+                var path = Path()
+                path.move(to: first)
+                points.dropFirst().forEach { path.addLine(to: $0) }
+                context.stroke(
+                    path,
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: viewport.viewLength(mark.width), lineCap: .round, lineJoin: .round)
+                )
+            case .arrow:
+                guard mark.points.count >= 2,
+                      let arrow = AnnotationGeometry.arrow(from: mark.points[0], to: mark.points[mark.points.count - 1], width: mark.width) else { continue }
+                var shaft = Path()
+                shaft.move(to: viewport.viewPoint(mark.points[0]))
+                shaft.addLine(to: viewport.viewPoint(arrow.shaftEnd))
+                context.stroke(
+                    shaft,
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: viewport.viewLength(mark.width), lineCap: .butt)
+                )
+                var head = Path()
+                head.move(to: viewport.viewPoint(mark.points[mark.points.count - 1]))
+                head.addLine(to: viewport.viewPoint(arrow.left))
+                head.addLine(to: viewport.viewPoint(arrow.right))
+                head.closeSubpath()
+                context.fill(head, with: .color(color))
+            case .text:
+                guard let origin = mark.points.first else { continue }
+                let size = max(1, viewport.viewLength(max(18, mark.width * 8)))
+                context.draw(
+                    Text(mark.text)
+                        .font(.system(size: size, weight: .semibold))
+                        .foregroundStyle(color),
+                    at: viewport.viewPoint(origin),
+                    anchor: .topLeading
+                )
+            }
         }
     }
 
@@ -115,42 +185,100 @@ struct AnnotateEditor: View {
         .buttonStyle(.plain)
     }
 
-    private func fit(_ size: CGSize) -> CGRect {
-        let aspect = CGFloat(image.width) / CGFloat(max(image.height, 1))
-        if aspect > size.width / max(size.height, 1) {
-            let height = size.width / aspect
+    private func imagePoint(_ point: CGPoint, fitted: CGRect) -> CGPoint {
+        let x = (point.x - fitted.minX) / max(fitted.width, 1) * CGFloat(pixelWidth)
+        let y = (point.y - fitted.minY) / max(fitted.height, 1) * CGFloat(pixelHeight)
+        return CGPoint(x: min(max(0, x), CGFloat(pixelWidth)), y: min(max(0, y), CGFloat(pixelHeight)))
+    }
+}
+
+private struct MarkupViewport {
+    var fitted: CGRect
+    var pixelWidth: CGFloat
+    var pixelHeight: CGFloat
+
+    func viewPoint(_ point: CGPoint) -> CGPoint {
+        CGPoint(
+            x: fitted.minX + point.x / max(pixelWidth, 1) * fitted.width,
+            y: fitted.minY + point.y / max(pixelHeight, 1) * fitted.height
+        )
+    }
+
+    func viewLength(_ pixels: CGFloat) -> CGFloat {
+        pixels / max(pixelWidth, 1) * fitted.width
+    }
+
+    func viewRect(_ rect: CGRect) -> CGRect {
+        let origin = viewPoint(CGPoint(x: rect.minX, y: rect.minY))
+        return CGRect(
+            x: origin.x,
+            y: origin.y,
+            width: rect.width / max(pixelWidth, 1) * fitted.width,
+            height: rect.height / max(pixelHeight, 1) * fitted.height
+        )
+    }
+
+    static func fit(pixelWidth: Int, pixelHeight: Int, in size: CGSize) -> CGRect {
+        let aspect = CGFloat(pixelWidth) / CGFloat(max(pixelHeight, 1))
+        let viewAspect = size.width / max(size.height, 1)
+        if aspect > viewAspect {
+            let height = size.width / max(aspect, 0.0001)
             return CGRect(x: 0, y: (size.height - height) / 2, width: size.width, height: height)
         }
         let width = size.height * aspect
         return CGRect(x: (size.width - width) / 2, y: 0, width: width, height: size.height)
     }
-
-    private func imagePoint(_ point: CGPoint, fitted: CGRect) -> CGPoint {
-        let x = (point.x - fitted.minX) / max(fitted.width, 1) * CGFloat(image.width)
-        let y = (point.y - fitted.minY) / max(fitted.height, 1) * CGFloat(image.height)
-        return CGPoint(x: min(max(0, x), CGFloat(image.width)), y: min(max(0, y), CGFloat(image.height)))
-    }
 }
 
 struct RedactEditor: View {
     var image: CGImage
+    var pixelWidth: Int
+    var pixelHeight: Int
     var onClose: () -> Void
-    var onApply: (CGImage) -> Void
-    var onReplace: ((CGImage) -> Void)? = nil
+    var onApply: ([CGRect]) -> Void
+    var onReplace: (([CGRect]) -> Void)? = nil
     var replaceBlocker: String? = nil
     @State private var boxes: [CGRect] = []
     @State private var draft: CGRect?
+
+    init(
+        image: CGImage,
+        pixelWidth: Int? = nil,
+        pixelHeight: Int? = nil,
+        onClose: @escaping () -> Void,
+        onApply: @escaping ([CGRect]) -> Void,
+        onReplace: (([CGRect]) -> Void)? = nil,
+        replaceBlocker: String? = nil
+    ) {
+        self.image = image
+        self.pixelWidth = pixelWidth ?? image.width
+        self.pixelHeight = pixelHeight ?? image.height
+        self.onClose = onClose
+        self.onApply = onApply
+        self.onReplace = onReplace
+        self.replaceBlocker = replaceBlocker
+    }
 
     var body: some View {
         EditorChrome(title: "Redact", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: { boxes = []; draft = nil }, onPrimary: { apply(onApply) },
                      replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
             GeometryReader { geo in
-                let fitted = fit(geo.size)
+                let fitted = MarkupViewport.fit(pixelWidth: pixelWidth, pixelHeight: pixelHeight, in: geo.size)
+                let viewport = MarkupViewport(fitted: fitted, pixelWidth: CGFloat(pixelWidth), pixelHeight: CGFloat(pixelHeight))
                 ZStack {
-                    Image(decorative: rendered, scale: 1)
+                    Image(decorative: image, scale: 1)
                         .resizable()
+                        .interpolation(.high)
                         .frame(width: fitted.width, height: fitted.height)
                         .position(x: fitted.midX, y: fitted.midY)
+                    Canvas { context, _ in
+                        var all = boxes
+                        if let draft { all.append(draft) }
+                        for box in all {
+                            context.fill(Path(viewport.viewRect(box)), with: .color(.black))
+                        }
+                    }
+                    .allowsHitTesting(false)
                 }
                 .contentShape(Rectangle())
                 .gesture(DragGesture(minimumDistance: 1).onChanged { value in
@@ -166,30 +294,14 @@ struct RedactEditor: View {
         }
     }
 
-    private var rendered: CGImage {
-        var all = boxes
-        if let draft { all.append(draft) }
-        return AnnotationRenderer.redact(base: image, boxes: all) ?? image
-    }
-
-    private func apply(_ handler: (CGImage) -> Void) {
-        if let image = AnnotationRenderer.redact(base: image, boxes: boxes) { handler(image) }
-    }
-
-    private func fit(_ size: CGSize) -> CGRect {
-        let aspect = CGFloat(image.width) / CGFloat(max(image.height, 1))
-        if aspect > size.width / max(size.height, 1) {
-            let height = size.width / aspect
-            return CGRect(x: 0, y: (size.height - height) / 2, width: size.width, height: height)
-        }
-        let width = size.height * aspect
-        return CGRect(x: (size.width - width) / 2, y: 0, width: width, height: size.height)
+    private func apply(_ handler: ([CGRect]) -> Void) {
+        handler(boxes)
     }
 
     private func imagePoint(_ point: CGPoint, fitted: CGRect) -> CGPoint {
         CGPoint(
-            x: (point.x - fitted.minX) / max(fitted.width, 1) * CGFloat(image.width),
-            y: (point.y - fitted.minY) / max(fitted.height, 1) * CGFloat(image.height)
+            x: (point.x - fitted.minX) / max(fitted.width, 1) * CGFloat(pixelWidth),
+            y: (point.y - fitted.minY) / max(fitted.height, 1) * CGFloat(pixelHeight)
         )
     }
 }
@@ -240,41 +352,80 @@ struct MetadataEditor: View {
     }
 }
 
+struct ImageAdjustments: Equatable {
+    var brightness: Double
+    var contrast: Double
+    var saturation: Double
+    var sharpness: Double
+}
+
 struct AdjustEditor: View {
     var image: CGImage
     var onClose: () -> Void
-    var onApply: (CGImage) -> Void
-    var onReplace: ((CGImage) -> Void)? = nil
+    var onApply: (ImageAdjustments) -> Void
+    var onReplace: ((ImageAdjustments) -> Void)? = nil
     var replaceBlocker: String? = nil
     @State private var brightness: Double = 0
     @State private var contrast: Double = 1
     @State private var saturation: Double = 1
     @State private var sharpness: Double = 0
+    /// Nil shows the source. Updated at about 30Hz while a slider moves, and immediately on release.
+    @State private var shown: CGImage?
+    @State private var lastPreviewAt = Date.distantPast
 
     var body: some View {
         EditorChrome(title: "Edit", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: reset, onPrimary: { apply(onApply) },
                      replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
             VStack(spacing: 14) {
-                Image(decorative: preview, scale: 1)
+                Image(decorative: shown ?? image, scale: 1)
                     .resizable()
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
                     .padding(.horizontal, 18)
                 VStack(spacing: 8) {
-                    LabeledSlider(title: "Brightness", value: $brightness, range: -0.4...0.4, display: String(format: "%+.2f", brightness))
-                    LabeledSlider(title: "Contrast", value: $contrast, range: 0.5...1.6, display: String(format: "%.2f", contrast))
-                    LabeledSlider(title: "Saturation", value: $saturation, range: 0...2, display: String(format: "%.2f", saturation))
-                    LabeledSlider(title: "Sharpness", value: $sharpness, range: 0...1.5, display: String(format: "%.2f", sharpness))
+                    slider("Brightness", value: $brightness, range: -0.4...0.4, display: String(format: "%+.2f", brightness))
+                    slider("Contrast", value: $contrast, range: 0.5...1.6, display: String(format: "%.2f", contrast))
+                    slider("Saturation", value: $saturation, range: 0...2, display: String(format: "%.2f", saturation))
+                    slider("Sharpness", value: $sharpness, range: 0...1.5, display: String(format: "%.2f", sharpness))
                 }
                 .padding(.horizontal, 18)
             }
+            .onChange(of: adjustmentToken) { _, _ in schedulePreview() }
         }
     }
 
-    private var preview: CGImage { rendered() ?? image }
+    private var adjustmentToken: ImageAdjustments {
+        ImageAdjustments(brightness: brightness, contrast: contrast, saturation: saturation, sharpness: sharpness)
+    }
 
-    private func rendered() -> CGImage? {
-        ImageAdjust.render(image, brightness: brightness, contrast: contrast, saturation: saturation, sharpness: sharpness)
+    private var isIdentity: Bool {
+        brightness == 0 && contrast == 1 && saturation == 1 && sharpness == 0
+    }
+
+    private func slider(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, display: String) -> some View {
+        LabeledSlider(title: title, value: value, range: range, display: display) { editing in
+            if !editing { renderPreview() }
+        }
+    }
+
+    /// Slider events arrive faster than the preview can render. Keep up at 30Hz; release paints the final value.
+    private func schedulePreview() {
+        if isIdentity {
+            lastPreviewAt = Date()
+            shown = nil
+            return
+        }
+        guard Date().timeIntervalSince(lastPreviewAt) >= 1.0 / 30.0 else { return }
+        renderPreview()
+    }
+
+    private func renderPreview() {
+        lastPreviewAt = Date()
+        if isIdentity {
+            shown = nil
+            return
+        }
+        shown = ImageAdjust.render(image, brightness: brightness, contrast: contrast, saturation: saturation, sharpness: sharpness) ?? image
     }
 
     private func reset() {
@@ -284,7 +435,9 @@ struct AdjustEditor: View {
         sharpness = 0
     }
 
-    private func apply(_ handler: (CGImage) -> Void) { if let image = rendered() { handler(image) } }
+    private func apply(_ handler: (ImageAdjustments) -> Void) {
+        handler(adjustmentToken)
+    }
 }
 
 struct CompressEditor: View {

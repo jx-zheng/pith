@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var built: WheelContents.Built?
     private var navigation = WheelNavigation(count: 0)
     private var dropAccepted = false
-    private var shownJobs: Set<UUID> = []
+    private var shownJobs: [UUID: HUDJob] = [:]
     private var editorWindows: [NSWindow] = []
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
@@ -133,6 +133,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         menu.onCancelJobs = { [weak self] in self?.center.cancelAll() }
         menu.onUndo = { [weak self] in self?.undoLastConversion() }
+        center.onUndoWindow = { [weak self] date in
+            self?.undoTap.arm(entryDate: date)
+        }
         installUndoHotKey()
         installUndoTap()
         menu.onSettings = { [weak self] in self?.showSettings() }
@@ -428,14 +431,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func syncHUD(_ jobs: [HUDJob]) {
-        let ids = Set(jobs.map(\.id))
-        for job in jobs {
-            hud.upsert(job)
-        }
-        for id in shownJobs.subtracting(ids) {
+        let incomingIDs = Set(jobs.map(\.id))
+        let removedAny = shownJobs.keys.contains(where: { !incomingIDs.contains($0) })
+        for id in shownJobs.keys where !incomingIDs.contains(id) {
             hud.remove(id)
         }
-        shownJobs = ids
+        for job in jobs {
+            if shownJobs[job.id] != job {
+                hud.upsert(job)
+            } else if removedAny {
+                hud.place(job)
+            }
+        }
+        shownJobs = Dictionary(uniqueKeysWithValues: jobs.map { ($0.id, $0) })
     }
 
     private func showSettings() {
@@ -490,95 +498,116 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func present(_ request: EditorRequest) {
         switch request {
         case let .crop(url):
-            presentWindow(size: NSSize(width: 760, height: 860)) { close in
-                self.imageEditor(url, close: close) { image, close in
-                    CropEditor(image: image, onClose: close, onApply: { rect in
-                        self.save(source: url) { try $0.crop(image, source: url, to: rect) }
-                        close()
-                    }, onReplace: { rect in
-                        self.replace(source: url) { try $0.cropReplacing(image, source: url, to: rect) }
-                        close()
-                    }, replaceBlocker: ReplaceStore.blocker(for: url))
-                }
-            }
-        case let .addBackground(url):
-            presentWindow(size: NSSize(width: 760, height: 860)) { close in
-                self.imageEditor(url, close: close) { image, close in
-                    AddBackgroundEditor(image: image, onClose: close) { composed in
-                        self.save(source: url) { try $0.addBackground(composed, source: url) }
-                        close()
+            openImageEditor(url: url, size: NSSize(width: 760, height: 860)) { source, close in
+                CropEditor(image: source.preview, pixelWidth: source.pixelWidth, pixelHeight: source.pixelHeight, onClose: close, onApply: { rect in
+                    self.save(source: url) { engine in
+                        let (full, mapped) = try source.cropSource(for: rect)
+                        return try engine.crop(full, source: url, to: mapped)
                     }
-                }
-            }
-        case let .annotate(url):
-            presentWindow(size: NSSize(width: 760, height: 820)) { close in
-                self.imageEditor(url, close: close) { image, close in
-                    AnnotateEditor(image: image, onClose: close, onApply: { marked in
-                        self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Annotated") }
-                        close()
-                    }, onReplace: { marked in
-                        self.replace(source: url) { try $0.replaceOriginal(marked, source: url) }
-                        close()
-                    }, replaceBlocker: ReplaceStore.blocker(for: url))
-                }
-            }
-        case let .redact(url):
-            presentWindow(size: NSSize(width: 760, height: 820)) { close in
-                self.imageEditor(url, close: close) { image, close in
-                    RedactEditor(image: image, onClose: close, onApply: { marked in
-                        self.save(source: url) { try $0.saveKeepingFormat(marked, source: url, suffix: " Redacted") }
-                        close()
-                    }, onReplace: { marked in
-                        self.replace(source: url) { try $0.replaceOriginal(marked, source: url) }
-                        close()
-                    }, replaceBlocker: ReplaceStore.blocker(for: url))
-                }
-            }
-        case let .adjust(url):
-            presentWindow(size: NSSize(width: 720, height: 780)) { close in
-                self.imageEditor(url, close: close) { image, close in
-                    AdjustEditor(image: image, onClose: close, onApply: { edited in
-                        self.save(source: url) { try $0.saveKeepingFormat(edited, source: url, suffix: " Edited") }
-                        close()
-                    }, onReplace: { edited in
-                        self.replace(source: url) { try $0.replaceOriginal(edited, source: url) }
-                        close()
-                    }, replaceBlocker: ReplaceStore.blocker(for: url))
-                }
-            }
-        case let .metadata(url):
-            let rows = ImageIOBridge.properties(of: url)
-            presentWindow(size: NSSize(width: 560, height: 640)) { close in
-                MetadataEditor(source: url, rows: rows, onClose: close, onStrip: {
-                    self.save(source: url) { try $0.stripMetadata(url) }
                     close()
-                }, onStripReplacing: {
-                    self.replace(source: url) { try $0.stripMetadataReplacing(url) }
+                }, onReplace: { rect in
+                    self.replace(source: url) { engine in
+                        let (full, mapped) = try source.cropSource(for: rect)
+                        return try engine.cropReplacing(full, source: url, to: mapped)
+                    }
                     close()
                 }, replaceBlocker: ReplaceStore.blocker(for: url))
             }
+        case let .addBackground(url):
+            openImageEditor(url: url, size: NSSize(width: 760, height: 860)) { source, close in
+                AddBackgroundEditor(image: source.preview, pixelWidth: source.pixelWidth, pixelHeight: source.pixelHeight, onClose: close) { edit in
+                    self.save(source: url) { engine in
+                        try engine.addBackground(try source.backed(edit), source: url)
+                    }
+                    close()
+                }
+            }
+        case let .annotate(url):
+            openImageEditor(url: url, size: NSSize(width: 760, height: 820)) { source, close in
+                AnnotateEditor(image: source.preview, pixelWidth: source.pixelWidth, pixelHeight: source.pixelHeight, onClose: close, onApply: { marks in
+                    self.save(source: url) { engine in
+                        try engine.saveKeepingFormat(try source.annotated(marks), source: url, suffix: " Annotated")
+                    }
+                    close()
+                }, onReplace: { marks in
+                    self.replace(source: url) { engine in
+                        try engine.replaceOriginal(try source.annotated(marks), source: url)
+                    }
+                    close()
+                }, replaceBlocker: ReplaceStore.blocker(for: url))
+            }
+        case let .redact(url):
+            openImageEditor(url: url, size: NSSize(width: 760, height: 820)) { source, close in
+                RedactEditor(image: source.preview, pixelWidth: source.pixelWidth, pixelHeight: source.pixelHeight, onClose: close, onApply: { boxes in
+                    self.save(source: url) { engine in
+                        try engine.saveKeepingFormat(try source.redacted(boxes), source: url, suffix: " Redacted")
+                    }
+                    close()
+                }, onReplace: { boxes in
+                    self.replace(source: url) { engine in
+                        try engine.replaceOriginal(try source.redacted(boxes), source: url)
+                    }
+                    close()
+                }, replaceBlocker: ReplaceStore.blocker(for: url))
+            }
+        case let .adjust(url):
+            openImageEditor(url: url, size: NSSize(width: 720, height: 780)) { source, close in
+                AdjustEditor(image: source.preview, onClose: close, onApply: { edit in
+                    self.save(source: url) { engine in
+                        try engine.saveKeepingFormat(try source.adjusted(edit), source: url, suffix: " Edited")
+                    }
+                    close()
+                }, onReplace: { edit in
+                    self.replace(source: url) { engine in
+                        try engine.replaceOriginal(try source.adjusted(edit), source: url)
+                    }
+                    close()
+                }, replaceBlocker: ReplaceStore.blocker(for: url))
+            }
+        case let .metadata(url):
+            Task { @MainActor in
+                let rows = await Task.detached { ImageIOBridge.properties(of: url) }.value
+                self.presentWindow(size: NSSize(width: 560, height: 640)) { close in
+                    MetadataEditor(source: url, rows: rows, onClose: close, onStrip: {
+                        self.save(source: url) { try $0.stripMetadata(url) }
+                        close()
+                    }, onStripReplacing: {
+                        self.replace(source: url) { try $0.stripMetadataReplacing(url) }
+                        close()
+                    }, replaceBlocker: ReplaceStore.blocker(for: url))
+                }
+            }
         case let .compress(urls):
             guard let url = urls.first else { return }
-            let matched = FileTypes.matching(path: url.path)
-            let isVideo = matched?.kind == .video
-            let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
-            let image = isVideo ? nil : (try? ImageIOBridge.loadOriented(url))
-            presentWindow(size: NSSize(width: 640, height: 720)) { close in
-                CompressEditor(
-                    image: image,
-                    originalBytes: bytes,
-                    isVideo: isVideo,
-                    onClose: close,
-                    onApplyImage: { rendered, quality, maxEdge in
-                        self.save(source: url) { try $0.compressImage(rendered, source: url, quality: quality, maxEdge: maxEdge) }
-                        close()
-                    },
-                    onApplyVideo: { bitrate in
-                        self.pushSettings()
-                        self.center.exportVideo(source: url, trim: nil, bitrate: bitrate, anchor: NSEvent.mouseLocation)
-                        close()
-                    }
-                )
+            let size = NSSize(width: 640, height: 720)
+            Task { @MainActor in
+                let payload = await Task.detached { () -> (Bool, Int64, EditorImage?) in
+                    let matched = FileTypes.matching(path: url.path)
+                    let isVideo = matched?.kind == .video
+                    let bytes = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value ?? 0
+                    let image = isVideo ? nil : EditorImage.load(url: url, windowLongEdge: max(size.width, size.height))
+                    return (isVideo, bytes, image)
+                }.value
+                self.presentWindow(size: size) { close in
+                    CompressEditor(
+                        image: payload.2?.preview,
+                        originalBytes: payload.1,
+                        isVideo: payload.0,
+                        onClose: close,
+                        onApplyImage: { _, quality, maxEdge in
+                            self.save(source: url) { engine in
+                                let full = try payload.2?.fullImage() ?? ImageIOBridge.loadOriented(url)
+                                return try engine.compressImage(full, source: url, quality: quality, maxEdge: maxEdge)
+                            }
+                            close()
+                        },
+                        onApplyVideo: { bitrate in
+                            self.pushSettings()
+                            self.center.exportVideo(source: url, trim: nil, bitrate: bitrate, anchor: NSEvent.mouseLocation)
+                            close()
+                        }
+                    )
+                }
             }
         case let .trim(urls):
             guard let url = urls.first else { return }
@@ -595,12 +624,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    @ViewBuilder
-    private func imageEditor<Content: View>(_ url: URL, close: @escaping () -> Void, @ViewBuilder content: (CGImage, @escaping () -> Void) -> Content) -> some View {
-        if let image = try? ImageIOBridge.loadOriented(url) {
-            content(image, close)
-        } else {
-            MissingImageNote(name: url.lastPathComponent, onClose: close)
+    /// Decodes a display preview off the main thread, then opens the editor.
+    private func openImageEditor<Content: View>(
+        url: URL,
+        size: NSSize,
+        @ViewBuilder content: @escaping (EditorImage, @escaping () -> Void) -> Content
+    ) {
+        let longEdge = max(size.width, size.height)
+        Task { @MainActor in
+            let loaded = await Task.detached {
+                EditorImage.load(url: url, windowLongEdge: longEdge)
+            }.value
+            self.presentWindow(size: size) { close in
+                if let loaded {
+                    content(loaded, close)
+                } else {
+                    MissingImageNote(name: url.lastPathComponent, onClose: close)
+                }
+            }
         }
     }
 
@@ -620,23 +661,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editorWindows.append(window)
     }
 
-    /// Runs an editor save through the engine, then records it for Recent and Undo.
-    private func save(source: URL, _ work: (ConversionEngine) throws -> URL) {
+    /// Runs an editor save off the main thread, then records it for Recent and Undo.
+    private func save(source: URL, _ work: @escaping (ConversionEngine) throws -> URL) {
         pushSettings()
-        do {
-            center.recordSaved(try work(center.engine), source: source)
-        } catch {
-            Notifier.shared.post(title: "Couldn't save", body: error.localizedDescription, paths: [])
+        let engine = center.engine
+        Task.detached {
+            do {
+                let saved = try work(engine)
+                await MainActor.run {
+                    self.center.recordSaved(saved, source: source)
+                }
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run {
+                    Notifier.shared.post(title: "Couldn't save", body: message, paths: [])
+                }
+            }
         }
     }
 
     /// Save and Replace: overwrite the source in place (backed up for undo).
-    private func replace(source: URL, _ work: (ConversionEngine) throws -> ReplacedFile) {
+    private func replace(source: URL, _ work: @escaping (ConversionEngine) throws -> ReplacedFile) {
         pushSettings()
-        do {
-            center.recordReplaced(try work(center.engine), source: source)
-        } catch {
-            Notifier.shared.post(title: "Couldn't replace \(source.lastPathComponent)", body: error.localizedDescription, paths: [])
+        let engine = center.engine
+        let name = source.lastPathComponent
+        Task.detached {
+            do {
+                let entry = try work(engine)
+                await MainActor.run {
+                    self.center.recordReplaced(entry, source: source)
+                }
+            } catch {
+                let message = error.localizedDescription
+                await MainActor.run {
+                    Notifier.shared.post(title: "Couldn't replace \(name)", body: message, paths: [])
+                }
+            }
         }
     }
 

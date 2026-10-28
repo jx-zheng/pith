@@ -4,8 +4,11 @@ import PithCore
 
 struct CropEditor: View {
     var image: CGImage
+    /// Full-resolution pixel space. `image` may be a display preview.
+    var pixelWidth: Int
+    var pixelHeight: Int
     var onClose: () -> Void
-    /// Receives the crop rectangle; the engine crops and saves.
+    /// Receives the crop rectangle in `pixelWidth` × `pixelHeight`; the engine crops the full image.
     var onApply: (PixelRect) -> Void
     var onReplace: ((PixelRect) -> Void)?
     var replaceBlocker: String?
@@ -13,25 +16,27 @@ struct CropEditor: View {
     @State private var aspect: AspectPreset = .free
     @State private var crop: PixelRect
 
-    init(image: CGImage, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void,
+    init(image: CGImage, pixelWidth: Int? = nil, pixelHeight: Int? = nil, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void,
          onReplace: ((PixelRect) -> Void)? = nil, replaceBlocker: String? = nil) {
         self.image = image
+        self.pixelWidth = pixelWidth ?? image.width
+        self.pixelHeight = pixelHeight ?? image.height
         self.onClose = onClose
         self.onApply = onApply
         self.onReplace = onReplace
         self.replaceBlocker = replaceBlocker
-        _crop = State(initialValue: PixelRect(x: 0, y: 0, width: image.width, height: image.height))
+        _crop = State(initialValue: PixelRect(x: 0, y: 0, width: self.pixelWidth, height: self.pixelHeight))
     }
 
     var body: some View {
         EditorChrome(title: "Crop Image", primaryTitle: onReplace == nil ? "Apply" : "Save as New", onClose: onClose, onReset: reset, onPrimary: { onApply(crop) },
                      replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { handler(crop) } }) {
             VStack(spacing: 14) {
-                CropCanvas(image: image, crop: $crop, aspect: aspect)
+                CropCanvas(image: image, pixelWidth: pixelWidth, pixelHeight: pixelHeight, crop: $crop, aspect: aspect)
                     .padding(.horizontal, 18)
                 AspectChips(presets: [.free, .square, .widescreen, .portrait, .fourThree, .threeFour], selection: $aspect)
                     .onChange(of: aspect) { _, newValue in
-                        crop = CropGeometry.applying(aspect: newValue, to: crop, imageWidth: image.width, imageHeight: image.height)
+                        crop = CropGeometry.applying(aspect: newValue, to: crop, imageWidth: pixelWidth, imageHeight: pixelHeight)
                     }
                 HStack(spacing: 10) {
                     Text("W").foregroundStyle(PithTheme.ink.opacity(0.7))
@@ -55,7 +60,7 @@ struct CropEditor: View {
         Binding(get: { crop.width }, set: { newValue in
             var next = crop
             next.width = max(1, newValue)
-            crop = CropGeometry.applying(aspect: aspect, to: next, imageWidth: image.width, imageHeight: image.height)
+            crop = CropGeometry.applying(aspect: aspect, to: next, imageWidth: pixelWidth, imageHeight: pixelHeight)
         })
     }
 
@@ -64,23 +69,25 @@ struct CropEditor: View {
             var next = crop
             next.height = max(1, newValue)
             if aspect == .free {
-                crop = CropGeometry.clamped(next, imageWidth: image.width, imageHeight: image.height)
+                crop = CropGeometry.clamped(next, imageWidth: pixelWidth, imageHeight: pixelHeight)
             } else if let ratio = aspect.ratio {
                 next.width = max(1, Int((Double(next.height) * ratio).rounded()))
-                crop = CropGeometry.clamped(next, imageWidth: image.width, imageHeight: image.height)
+                crop = CropGeometry.clamped(next, imageWidth: pixelWidth, imageHeight: pixelHeight)
             }
         })
     }
 
     private func reset() {
         aspect = .free
-        crop = PixelRect(x: 0, y: 0, width: image.width, height: image.height)
+        crop = PixelRect(x: 0, y: 0, width: pixelWidth, height: pixelHeight)
     }
 
 }
 
 private struct CropCanvas: View {
     var image: CGImage
+    var pixelWidth: Int
+    var pixelHeight: Int
     @Binding var crop: PixelRect
     var aspect: AspectPreset
     @State private var dragOrigin: PixelRect?
@@ -114,8 +121,8 @@ private struct CropCanvas: View {
                     handle = hitHandle(at: value.startLocation, fitted: fitted)
                 }
                 guard let origin = dragOrigin else { return }
-                let dx = Int(((value.location.x - value.startLocation.x) / max(fitted.width, 1)) * CGFloat(image.width))
-                let dy = Int(((value.location.y - value.startLocation.y) / max(fitted.height, 1)) * CGFloat(image.height))
+                let dx = Int(((value.location.x - value.startLocation.x) / max(fitted.width, 1)) * CGFloat(pixelWidth))
+                let dy = Int(((value.location.y - value.startLocation.y) / max(fitted.height, 1)) * CGFloat(pixelHeight))
                 var next = origin
                 switch handle ?? .move {
                 case .move:
@@ -150,7 +157,7 @@ private struct CropCanvas: View {
                 }
                 next.width = max(1, next.width)
                 next.height = max(1, next.height)
-                crop = CropGeometry.applying(aspect: aspect, to: next, imageWidth: image.width, imageHeight: image.height)
+                crop = CropGeometry.applying(aspect: aspect, to: next, imageWidth: pixelWidth, imageHeight: pixelHeight)
             }
             .onEnded { _ in
                 dragOrigin = nil
@@ -159,7 +166,7 @@ private struct CropCanvas: View {
     }
 
     private func fittedRect(in size: CGSize) -> CGRect {
-        let imageAspect = CGFloat(image.width) / CGFloat(max(image.height, 1))
+        let imageAspect = CGFloat(pixelWidth) / CGFloat(max(pixelHeight, 1))
         let viewAspect = size.width / max(size.height, 1)
         if imageAspect > viewAspect {
             let height = size.width / imageAspect
@@ -170,8 +177,8 @@ private struct CropCanvas: View {
     }
 
     private func viewRect(fitted: CGRect) -> CGRect {
-        let sx = fitted.width / CGFloat(max(image.width, 1))
-        let sy = fitted.height / CGFloat(max(image.height, 1))
+        let sx = fitted.width / CGFloat(max(pixelWidth, 1))
+        let sy = fitted.height / CGFloat(max(pixelHeight, 1))
         return CGRect(
             x: fitted.minX + CGFloat(crop.x) * sx,
             y: fitted.minY + CGFloat(crop.y) * sy,
@@ -237,10 +244,28 @@ private enum CropHandle: CaseIterable {
     }
 }
 
+struct BackgroundEdit: Equatable {
+    var padding: Int
+    var cornerRadius: CGFloat
+    var shadowRadius: CGFloat
+    var fill: BackgroundFill
+    var aspect: AspectPreset
+}
+
 struct AddBackgroundEditor: View {
     var image: CGImage
+    var pixelWidth: Int
+    var pixelHeight: Int
     var onClose: () -> Void
-    var onApply: (CGImage) -> Void
+    var onApply: (BackgroundEdit) -> Void
+
+    init(image: CGImage, pixelWidth: Int? = nil, pixelHeight: Int? = nil, onClose: @escaping () -> Void, onApply: @escaping (BackgroundEdit) -> Void) {
+        self.image = image
+        self.pixelWidth = pixelWidth ?? image.width
+        self.pixelHeight = pixelHeight ?? image.height
+        self.onClose = onClose
+        self.onApply = onApply
+    }
 
     @State private var padding: Double = 160
     // Corners and shadow are relative, so they look the same on a 400 px icon and a 6K screenshot.
@@ -270,7 +295,7 @@ struct AddBackgroundEditor: View {
     private var preview: some View {
         // WYSIWYG: lay the canvas out exactly as the export does, scaled to fit the preview.
         GeometryReader { geo in
-            let canvas = BackgroundCanvas(imageWidth: image.width, imageHeight: image.height, padding: Int(padding), aspect: aspect).size
+            let canvas = BackgroundCanvas(imageWidth: pixelWidth, imageHeight: pixelHeight, padding: Int(padding), aspect: aspect).size
             let scale = min(geo.size.width / CGFloat(canvas.width), geo.size.height / CGFloat(canvas.height))
             let blur = shadowPixels * scale
             ZStack {
@@ -278,7 +303,7 @@ struct AddBackgroundEditor: View {
                 Image(decorative: image, scale: 1)
                     .resizable()
                     .interpolation(.high)
-                    .frame(width: CGFloat(image.width) * scale, height: CGFloat(image.height) * scale)
+                    .frame(width: CGFloat(pixelWidth) * scale, height: CGFloat(pixelHeight) * scale)
                     .clipShape(RoundedRectangle(cornerRadius: cornerPixels * scale, style: .circular))
                     // CoreGraphics blur is roughly 2× SwiftUI's shadow radius for the same look.
                     .shadow(color: .black.opacity(blur > 0 ? 0.45 : 0), radius: blur / 2, y: blur * 0.35)
@@ -330,11 +355,11 @@ struct AddBackgroundEditor: View {
     }
 
     private var cornerPixels: CGFloat {
-        CGFloat(corners / 100) * CGFloat(min(image.width, image.height)) / 2
+        CGFloat(corners / 100) * CGFloat(min(pixelWidth, pixelHeight)) / 2
     }
 
     private var shadowPixels: CGFloat {
-        CGFloat(shadow / 100) * CGFloat(max(image.width, image.height)) * 0.1
+        CGFloat(shadow / 100) * CGFloat(max(pixelWidth, pixelHeight)) * 0.1
     }
 
     private func reset() {
@@ -346,16 +371,13 @@ struct AddBackgroundEditor: View {
     }
 
     private func apply() {
-        if let rendered = ImageComposer.addBackground(
-            image: image,
+        onApply(BackgroundEdit(
             padding: Int(padding),
             cornerRadius: cornerPixels,
             shadowRadius: shadowPixels,
-            background: fill,
+            fill: fill,
             aspect: aspect
-        ) {
-            onApply(rendered)
-        }
+        ))
     }
 }
 

@@ -69,14 +69,17 @@ enum ImageIOBridge {
         }
     }
 
-    static func loadOriented(_ url: URL) throws -> CGImage {
+    /// Cap for apply/save and for conversions. Editor previews pass a much smaller size.
+    static let fullResolutionMaxPixelSize = 16_000
+
+    static func loadOriented(_ url: URL, maxPixelSize: Int = fullResolutionMaxPixelSize) throws -> CGImage {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             throw ConversionFailure.unreadable("Couldn't read \(url.lastPathComponent).")
         }
         let options: [CFString: Any] = [
             kCGImageSourceCreateThumbnailFromImageAlways: true,
             kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceThumbnailMaxPixelSize: 16000
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize
         ]
         if let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) {
             return image
@@ -85,6 +88,48 @@ enum ImageIOBridge {
             return image
         }
         throw ConversionFailure.unreadable("Couldn't decode \(url.lastPathComponent).")
+    }
+
+    /// Oriented pixel size from the image header. No pixel decode.
+    static func orientedPixelSize(of url: URL) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let raw = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let pixelWidth = integer(raw[kCGImagePropertyPixelWidth]),
+              let pixelHeight = integer(raw[kCGImagePropertyPixelHeight]),
+              pixelWidth > 0, pixelHeight > 0 else { return nil }
+        switch orientation(in: raw) {
+        case 5, 6, 7, 8:
+            return (pixelHeight, pixelWidth)
+        default:
+            return (pixelWidth, pixelHeight)
+        }
+    }
+
+    /// Editor coordinate space: oriented pixels, capped the same way a full `loadOriented` is.
+    static func editorPixelSize(of url: URL) -> (width: Int, height: Int)? {
+        guard let size = orientedPixelSize(of: url) else { return nil }
+        let longEdge = max(size.width, size.height)
+        guard longEdge > fullResolutionMaxPixelSize else { return size }
+        let scale = Double(fullResolutionMaxPixelSize) / Double(longEdge)
+        return (
+            max(1, Int((Double(size.width) * scale).rounded())),
+            max(1, Int((Double(size.height) * scale).rounded()))
+        )
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        if let number = value as? Int { return number }
+        if let number = value as? NSNumber { return number.intValue }
+        return nil
+    }
+
+    private static func orientation(in raw: [CFString: Any]) -> Int {
+        if let value = integer(raw[kCGImagePropertyOrientation]) { return value }
+        if let tiff = raw[kCGImagePropertyTIFFDictionary] as? [CFString: Any],
+           let value = integer(tiff[kCGImagePropertyOrientation]) {
+            return value
+        }
+        return 1
     }
 
     static func properties(of url: URL) -> [(String, String)] {
@@ -211,6 +256,31 @@ struct AnnotationMark: Equatable {
     var width: CGFloat
 }
 
+/// Arrow shaft and head in the same coordinate space as `start` and `tip`.
+enum AnnotationGeometry {
+    struct Arrow {
+        var shaftEnd: CGPoint
+        var left: CGPoint
+        var right: CGPoint
+    }
+
+    static func arrow(from start: CGPoint, to tip: CGPoint, width: CGFloat) -> Arrow? {
+        let dx = tip.x - start.x, dy = tip.y - start.y
+        let length = hypot(dx, dy)
+        guard length > 0.5 else { return nil }
+        let ux = dx / length, uy = dy / length
+        let nx = -uy, ny = ux
+        let headLength = min(max(14, width * 4.2), length * 0.6)
+        let halfWidth = max(7, width * 2.2) * (headLength / max(14, width * 4.2))
+        let base = CGPoint(x: tip.x - ux * headLength, y: tip.y - uy * headLength)
+        let overlap = min(headLength * 0.35, width)
+        let shaftEnd = CGPoint(x: base.x + ux * overlap, y: base.y + uy * overlap)
+        let left = CGPoint(x: base.x + nx * halfWidth, y: base.y + ny * halfWidth)
+        let right = CGPoint(x: base.x - nx * halfWidth, y: base.y - ny * halfWidth)
+        return Arrow(shaftEnd: shaftEnd, left: left, right: right)
+    }
+}
+
 enum AnnotationRenderer {
     static func render(base: CGImage, marks: [AnnotationMark]) -> CGImage? {
         let width = base.width
@@ -236,34 +306,18 @@ enum AnnotationRenderer {
                 flipped.dropFirst().forEach { context.addLine(to: $0) }
                 context.strokePath()
             case .arrow:
-                guard flipped.count >= 2 else { continue }
-                let start = flipped[0]
-                let tip = flipped[flipped.count - 1]
-                let dx = tip.x - start.x, dy = tip.y - start.y
-                let length = hypot(dx, dy)
-                guard length > 0.5 else { continue }
-                // Unit direction and its normal.
-                let ux = dx / length, uy = dy / length
-                let nx = -uy, ny = ux
-                // Head scales with stroke width, capped so short arrows keep a shaft.
-                let headLength = min(max(14, mark.width * 4.2), length * 0.6)
-                let halfWidth = max(7, mark.width * 2.2) * (headLength / max(14, mark.width * 4.2))
-                let base = CGPoint(x: tip.x - ux * headLength, y: tip.y - uy * headLength)
-                // Shaft stops just inside the head so its cap never pokes past the barbs or tip.
-                let overlap = min(headLength * 0.35, mark.width)
-                let shaftEnd = CGPoint(x: base.x + ux * overlap, y: base.y + uy * overlap)
+                guard flipped.count >= 2,
+                      let arrow = AnnotationGeometry.arrow(from: flipped[0], to: flipped[flipped.count - 1], width: mark.width) else { continue }
                 context.beginPath()
-                context.move(to: start)
-                context.addLine(to: shaftEnd)
+                context.move(to: flipped[0])
+                context.addLine(to: arrow.shaftEnd)
                 context.setLineCap(.butt)
                 context.strokePath()
                 context.setLineCap(.round)
-                let left = CGPoint(x: base.x + nx * halfWidth, y: base.y + ny * halfWidth)
-                let right = CGPoint(x: base.x - nx * halfWidth, y: base.y - ny * halfWidth)
                 context.beginPath()
-                context.move(to: tip)
-                context.addLine(to: left)
-                context.addLine(to: right)
+                context.move(to: flipped[flipped.count - 1])
+                context.addLine(to: arrow.left)
+                context.addLine(to: arrow.right)
                 context.closePath()
                 context.fillPath()
             case .text:
@@ -307,7 +361,11 @@ enum AnnotationRenderer {
 
 /// Edit tool: brightness, contrast, saturation and sharpness via Core Image.
 enum ImageAdjust {
+    /// One context for preview and apply. Caching intermediates retained full-size rasters between slider ticks.
+    static let context = CIContext(options: [.cacheIntermediates: false])
+
     static func render(_ image: CGImage, brightness: Double, contrast: Double, saturation: Double, sharpness: Double) -> CGImage? {
+        if brightness == 0, contrast == 1, saturation == 1, sharpness <= 0.01 { return image }
         let ci = CIImage(cgImage: image)
         guard let controls = CIFilter(name: "CIColorControls") else { return image }
         controls.setValue(ci, forKey: kCIInputImageKey)
@@ -321,6 +379,6 @@ enum ImageAdjust {
             output = sharpen.outputImage
         }
         guard let output else { return image }
-        return CIContext().createCGImage(output, from: output.extent)
+        return context.createCGImage(output, from: output.extent)
     }
 }

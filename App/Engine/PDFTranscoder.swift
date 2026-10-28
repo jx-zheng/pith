@@ -23,37 +23,39 @@ enum PDFTranscoder {
         var urls: [URL] = []
         let combined: (String) -> Bool = { exists($0) || written.contains($0) }
         for index in 0..<document.pageCount {
-            guard let page = document.page(at: index) else { continue }
-            let bounds = page.bounds(for: .mediaBox)
-            let width = max(1, Int((bounds.width * scale).rounded()))
-            let height = max(1, Int((bounds.height * scale).rounded()))
-            guard let context = CGContext(
-                data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
-                space: CGColorSpaceCreateDeviceRGB(),
-                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-            ) else {
-                throw ConversionFailure.writeFailed("Couldn't allocate a page bitmap.")
+            try autoreleasepool {
+                guard let page = document.page(at: index) else { return }
+                let bounds = page.bounds(for: .mediaBox)
+                let width = max(1, Int((bounds.width * scale).rounded()))
+                let height = max(1, Int((bounds.height * scale).rounded()))
+                guard let context = CGContext(
+                    data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                    space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                ) else {
+                    throw ConversionFailure.writeFailed("Couldn't allocate a page bitmap.")
+                }
+                context.setFillColor(CGColor(gray: 1, alpha: 1))
+                context.fill(CGRect(x: 0, y: 0, width: width, height: height))
+                context.saveGState()
+                context.scaleBy(x: scale, y: scale)
+                page.draw(with: .mediaBox, to: context)
+                context.restoreGState()
+                guard let image = context.makeImage() else {
+                    throw ConversionFailure.writeFailed("Couldn't render page \(index + 1).")
+                }
+                let path = OutputNamer.destination(
+                    sourcePath: source.path,
+                    outputExtension: format.primaryExtension,
+                    location: location,
+                    style: .page(number: index + 1, count: document.pageCount),
+                    exists: combined
+                )
+                let url = URL(fileURLWithPath: path)
+                try ImageIOBridge.write(image, to: url, uti: format.uti, quality: quality)
+                written.append(path)
+                urls.append(url)
             }
-            context.setFillColor(CGColor(gray: 1, alpha: 1))
-            context.fill(CGRect(x: 0, y: 0, width: width, height: height))
-            context.saveGState()
-            context.scaleBy(x: scale, y: scale)
-            page.draw(with: .mediaBox, to: context)
-            context.restoreGState()
-            guard let image = context.makeImage() else {
-                throw ConversionFailure.writeFailed("Couldn't render page \(index + 1).")
-            }
-            let path = OutputNamer.destination(
-                sourcePath: source.path,
-                outputExtension: format.primaryExtension,
-                location: location,
-                style: .page(number: index + 1, count: document.pageCount),
-                exists: combined
-            )
-            let url = URL(fileURLWithPath: path)
-            try ImageIOBridge.write(image, to: url, uti: format.uti, quality: quality)
-            written.append(path)
-            urls.append(url)
         }
         return urls
     }
@@ -74,9 +76,11 @@ enum PDFTranscoder {
         }
         let combined = NSMutableAttributedString()
         for index in 0..<document.pageCount {
-            guard let text = document.page(at: index)?.attributedString else { continue }
-            if combined.length > 0 { combined.append(NSAttributedString(string: "\n\n")) }
-            combined.append(text)
+            autoreleasepool {
+                guard let text = document.page(at: index)?.attributedString else { return }
+                if combined.length > 0 { combined.append(NSAttributedString(string: "\n\n")) }
+                combined.append(text)
+            }
         }
         let data = try combined.data(
             from: NSRange(location: 0, length: combined.length),
@@ -106,20 +110,24 @@ enum PDFTranscoder {
     static func merge(sources: [URL], destination: URL) throws -> [URL] {
         let document = PDFDocument()
         for source in sources {
-            if source.pathExtension.lowercased() != "pdf" {
-                // Images become one page each, sized to the image.
-                guard let image = NSImage(contentsOf: source), let page = PDFPage(image: image) else {
+            try autoreleasepool {
+                if source.pathExtension.lowercased() != "pdf" {
+                    // Images become one page each, sized to the image.
+                    guard let image = NSImage(contentsOf: source), let page = PDFPage(image: image) else {
+                        throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
+                    }
+                    document.insert(page, at: document.pageCount)
+                    return
+                }
+                guard let piece = PDFDocument(url: source) else {
                     throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
                 }
-                document.insert(page, at: document.pageCount)
-                continue
-            }
-            guard let piece = PDFDocument(url: source) else {
-                throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
-            }
-            for index in 0..<piece.pageCount {
-                if let page = piece.page(at: index) {
-                    document.insert(page, at: document.pageCount)
+                for index in 0..<piece.pageCount {
+                    autoreleasepool {
+                        if let page = piece.page(at: index) {
+                            document.insert(page, at: document.pageCount)
+                        }
+                    }
                 }
             }
         }
@@ -136,22 +144,24 @@ enum PDFTranscoder {
         var written: [String] = []
         var urls: [URL] = []
         for index in 0..<document.pageCount {
-            guard let page = document.page(at: index) else { continue }
-            let piece = PDFDocument()
-            piece.insert(page, at: 0)
-            let path = OutputNamer.destination(
-                sourcePath: source.path,
-                outputExtension: "pdf",
-                location: location,
-                style: .page(number: index + 1, count: document.pageCount),
-                exists: { exists($0) || written.contains($0) }
-            )
-            let url = URL(fileURLWithPath: path)
-            guard piece.write(to: url) else {
-                throw ConversionFailure.writeFailed("Couldn't write \(url.lastPathComponent).")
+            try autoreleasepool {
+                guard let page = document.page(at: index) else { return }
+                let piece = PDFDocument()
+                piece.insert(page, at: 0)
+                let path = OutputNamer.destination(
+                    sourcePath: source.path,
+                    outputExtension: "pdf",
+                    location: location,
+                    style: .page(number: index + 1, count: document.pageCount),
+                    exists: { exists($0) || written.contains($0) }
+                )
+                let url = URL(fileURLWithPath: path)
+                guard piece.write(to: url) else {
+                    throw ConversionFailure.writeFailed("Couldn't write \(url.lastPathComponent).")
+                }
+                written.append(path)
+                urls.append(url)
             }
-            written.append(path)
-            urls.append(url)
         }
         return urls
     }
