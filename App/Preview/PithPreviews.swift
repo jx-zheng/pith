@@ -95,22 +95,26 @@ private struct PreviewStage<Content: View>: View {
 }
 
 #Preview("Crop Image") {
-    CropEditor(image: PreviewSamples.pageImage(), onClose: {}, onApply: { _ in })
+    let image = PreviewSamples.pageImage()
+    CropEditor(image: image, pixelWidth: image.width, pixelHeight: image.height, onClose: {}, onApply: { _ in })
         .frame(width: 760, height: 860)
 }
 
 #Preview("Add BG") {
-    AddBackgroundEditor(image: PreviewSamples.pageImage(), onClose: {}, onApply: { _ in })
+    let image = PreviewSamples.pageImage()
+    AddBackgroundEditor(image: image, pixelWidth: image.width, pixelHeight: image.height, onClose: {}, onApply: { _ in })
         .frame(width: 760, height: 860)
 }
 
 #Preview("Annotate") {
-    AnnotateEditor(image: PreviewSamples.pageImage(), onClose: {}, onApply: { _ in })
+    let image = PreviewSamples.pageImage()
+    AnnotateEditor(image: image, pixelWidth: image.width, pixelHeight: image.height, onClose: {}, onApply: { _ in })
         .frame(width: 760, height: 820)
 }
 
 #Preview("Redact") {
-    RedactEditor(image: PreviewSamples.pageImage(), onClose: {}, onApply: { _ in })
+    let image = PreviewSamples.pageImage()
+    RedactEditor(image: image, pixelWidth: image.width, pixelHeight: image.height, onClose: {}, onApply: { _ in })
         .frame(width: 760, height: 820)
 }
 
@@ -135,7 +139,7 @@ private struct PreviewStage<Content: View>: View {
         originalBytes: 1_200_000,
         isVideo: false,
         onClose: {},
-        onApplyImage: { _, _, _ in },
+        onApplyImage: { _, _ in },
         onApplyVideo: nil
     )
     .frame(width: 640, height: 720)

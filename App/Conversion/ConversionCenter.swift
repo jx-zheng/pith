@@ -22,12 +22,16 @@ final class ConversionCenter: ObservableObject {
     var tools: ToolAvailability = .none
     var presentEditor: ((EditorRequest) -> Void)?
     var onJobsChanged: (([HUDJob]) -> Void)?
+    /// Fired with the entry date when `record` / `recordReplaced` stores something ⌘Z can undo.
+    var onUndoWindow: ((Date) -> Void)?
 
     var engine: ConversionEngine { ConversionEngine(settings: settings, tools: tools) }
 
     private var runners: [UUID: ProcessRunner] = [:]
     private var cancelled: Set<UUID> = []
     private let recentKey = "pith.recent.v1"
+    private let progressLock = NSLock()
+    private var progressStates: [UUID: ProgressPublishState] = [:]
 
     init() {
         if let data = UserDefaults.standard.data(forKey: recentKey),
@@ -52,13 +56,19 @@ final class ConversionCenter: ObservableObject {
         guard offer.isEnabled else { return }
         let job = startJob(title: "Converting to \(offer.label)", subtitle: subtitle(for: urls), anchor: anchor)
         let engine = self.engine
+        // Bookkeeping stays on main. ImageIO, PDFKit and attributed-string work starts on a detached task,
+        // so the synchronous prefix of `convert` is not the main actor.
         Task { @MainActor in
             await self.runBatch(urls: urls, job: job, drop: drop) { url, index, count in
-                self.update(job: job, title: count > 1 ? "Converting \(index) of \(count) to \(offer.label)" : "Converting to \(offer.label)", subtitle: url.lastPathComponent, progress: Double(index - 1) / Double(count))
-                return try await engine.convert(url, offer: offer, runner: self.makeRunner(job)) { fraction in
-                    let overall = (Double(index - 1) + fraction) / Double(count)
-                    self.update(job: job, title: self.jobs.first { $0.id == job }?.title ?? "", subtitle: url.lastPathComponent, progress: overall)
-                }
+                let title = count > 1 ? "Converting \(index) of \(count) to \(offer.label)" : "Converting to \(offer.label)"
+                self.update(job: job, title: title, subtitle: url.lastPathComponent, progress: Double(index - 1) / Double(count))
+                let runner = self.makeRunner(job)
+                return try await Task.detached {
+                    try await engine.convert(url, offer: offer, runner: runner) { fraction in
+                        let overall = (Double(index - 1) + fraction) / Double(count)
+                        self.update(job: job, title: title, subtitle: url.lastPathComponent, progress: overall)
+                    }
+                }.value
             }
         }
     }
@@ -106,6 +116,7 @@ final class ConversionCenter: ObservableObject {
             RecentLog.record(item, into: &self.recent)
             self.persistRecent()
             Notifier.shared.post(title: item.title, body: item.subtitle, paths: [entry.original])
+            self.onUndoWindow?(item.date)
         }
     }
 
@@ -117,11 +128,12 @@ final class ConversionCenter: ObservableObject {
         Task { @MainActor in
             do {
                 try self.throwIfCancelled(job)
-                let destination = try await engine.exportVideo(source: source, trim: trim, bitrate: bitrate, runner: self.makeRunner(job)) { fraction in
-                    Task { @MainActor in
+                let runner = self.makeRunner(job)
+                let destination = try await Task.detached {
+                    try await engine.exportVideo(source: source, trim: trim, bitrate: bitrate, runner: runner) { fraction in
                         self.update(job: job, title: title, subtitle: source.lastPathComponent, progress: fraction)
                     }
-                }
+                }.value
                 self.finishJob(job, title: "Saved \(destination.lastPathComponent)", subtitle: source.lastPathComponent, paths: [destination], success: true,
                                placements: [(.besideSource(source), [destination])])
             } catch {
@@ -137,7 +149,9 @@ final class ConversionCenter: ObservableObject {
         let engine = self.engine
         Task { @MainActor in
             do {
-                let outputs = try engine.merge(urls)
+                let outputs = try await Task.detached {
+                    try engine.merge(urls)
+                }.value
                 let target = PlacementTarget.resolve(drop: drop, source: ConversionEngine.mergeCandidates(urls).first)
                 self.finishJob(job, title: "Merged \(count) files", subtitle: outputs.first?.lastPathComponent ?? "", paths: outputs, success: true,
                                placements: target.map { [($0, outputs)] } ?? [])
@@ -152,7 +166,9 @@ final class ConversionCenter: ObservableObject {
         let engine = self.engine
         Task { @MainActor in
             do {
-                let outputs = try engine.split(url)
+                let outputs = try await Task.detached {
+                    try engine.split(url)
+                }.value
                 let target = PlacementTarget.resolve(drop: drop, source: url)!
                 self.finishJob(job, title: "Split into \(outputs.count) PDFs", subtitle: url.lastPathComponent, paths: outputs, success: true,
                                placements: [(target, outputs)])
@@ -195,6 +211,9 @@ final class ConversionCenter: ObservableObject {
         let id = startJob(title: title, subtitle: subtitle, anchor: NSEvent.mouseLocation)
         update(job: id, title: title, subtitle: subtitle, progress: 1)
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) {
+            self.progressLock.lock()
+            self.progressStates[id] = nil
+            self.progressLock.unlock()
             self.jobs.removeAll { $0.id == id }
             self.onJobsChanged?(self.jobs)
         }
@@ -208,13 +227,31 @@ final class ConversionCenter: ObservableObject {
         return id
     }
 
-    /// Conversions run on background tasks; job state and every UI callback live on main.
+    /// Job state and every UI callback live on main. Engine work is detached before it gets here.
     private func onMain(_ work: @escaping () -> Void) {
         if Thread.isMainThread { work() } else { DispatchQueue.main.async(execute: work) }
     }
 
     private func update(job id: UUID, title: String, subtitle: String, progress: Double) {
+        guard admit(id: id, title: title, subtitle: subtitle, progress: progress) else { return }
         onMain { self.updateOnMain(job: id, title: title, subtitle: subtitle, progress: progress) }
+    }
+
+    /// ffmpeg can emit a progress line per frame. Publish when the title changes, the fraction
+    /// moves by at least 0.5%, or 100ms has passed. Safe to call off the main thread.
+    private func admit(id: UUID, title: String, subtitle: String, progress: Double) -> Bool {
+        progressLock.lock()
+        defer { progressLock.unlock() }
+        var state = progressStates[id] ?? ProgressPublishState()
+        let titleChanged = state.title != title || state.subtitle != subtitle
+        let now = Date().timeIntervalSinceReferenceDate
+        let progressChanged = state.gate.shouldPublish(progress, now: now)
+        guard titleChanged || progressChanged else { return false }
+        if !progressChanged { state.gate.markPublished(progress, now: now) }
+        state.title = title
+        state.subtitle = subtitle
+        progressStates[id] = state
+        return true
     }
 
     private func updateOnMain(job id: UUID, title: String, subtitle: String, progress: Double) {
@@ -237,6 +274,9 @@ final class ConversionCenter: ObservableObject {
         }
         runners[id] = nil
         cancelled.remove(id)
+        progressLock.lock()
+        progressStates[id] = nil
+        progressLock.unlock()
         jobs.removeAll { $0.id == id }
         onJobsChanged?(jobs)
         record(title: title, subtitle: subtitle, paths: paths, success: success)
@@ -251,6 +291,7 @@ final class ConversionCenter: ObservableObject {
         RecentLog.record(item, into: &recent)
         persistRecent()
         Notifier.shared.post(title: title, body: subtitle, paths: paths.map(\.path))
+        if item.isUndoable { onUndoWindow?(item.date) }
     }
 
     private func persistRecent() {
@@ -274,4 +315,10 @@ final class ConversionCenter: ObservableObject {
         if urls.count == 1 { return urls[0].lastPathComponent }
         return "\(urls.count) files"
     }
+}
+
+private struct ProgressPublishState {
+    var gate = ProgressPublishGate()
+    var title = ""
+    var subtitle = ""
 }

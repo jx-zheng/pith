@@ -127,6 +127,7 @@ struct LabeledSlider: View {
     @Binding var value: Double
     var range: ClosedRange<Double>
     var display: String
+    var onEditingChanged: ((Bool) -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -134,7 +135,9 @@ struct LabeledSlider: View {
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(PithTheme.ink)
                 .frame(width: 72, alignment: .leading)
-            Slider(value: $value, in: range)
+            Slider(value: $value, in: range) { editing in
+                onEditingChanged?(editing)
+            }
                 .tint(PithTheme.highlight)
             Text(display)
                 .font(.system(size: 12, weight: .medium).monospacedDigit())

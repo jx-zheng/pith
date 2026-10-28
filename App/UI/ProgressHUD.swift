@@ -67,10 +67,16 @@ struct HUDJob: Identifiable, Equatable {
 
 final class HUDPanelController {
     private var panels: [UUID: NSPanel] = [:]
+    /// Insertion order. Dictionary key order is not stable, and cards were jumping as jobs updated.
+    private var order: [UUID] = []
 
     func upsert(_ job: HUDJob) {
+        let isNew = panels[job.id] == nil
         let panel = panels[job.id] ?? makePanel()
-        panels[job.id] = panel
+        if isNew {
+            panels[job.id] = panel
+            order.append(job.id)
+        }
         let root = ProgressHUDView(title: job.title, subtitle: job.subtitle, progress: job.progress) { [weak self] in
             self?.onCancel?(job.id)
         }
@@ -81,27 +87,48 @@ final class HUDPanelController {
             host.frame = NSRect(x: 0, y: 0, width: 286, height: 78)
             panel.contentView = host
         }
-        let size = NSSize(width: 286, height: 78)
-        let stacked = CGFloat(stackIndex(of: job.id)) * (size.height + 8)
-        let origin = NSPoint(x: job.anchor.x + 28, y: job.anchor.y - size.height - 28 - stacked)
-        panel.setFrame(NSRect(origin: origin, size: size), display: true)
-        panel.orderFrontRegardless()
+        place(job, on: panel)
+        if isNew || !panel.isVisible {
+            panel.orderFrontRegardless()
+        }
+    }
+
+    /// Moves a card without rebuilding its SwiftUI tree. Used when a sibling is removed.
+    func place(_ job: HUDJob) {
+        guard let panel = panels[job.id] else { return }
+        place(job, on: panel)
     }
 
     func remove(_ id: UUID) {
         panels[id]?.orderOut(nil)
         panels[id] = nil
+        order.removeAll { $0 == id }
     }
 
     func removeAll() {
         panels.values.forEach { $0.orderOut(nil) }
         panels.removeAll()
+        order.removeAll()
     }
 
     var onCancel: ((UUID) -> Void)?
 
+    private func place(_ job: HUDJob, on panel: NSPanel) {
+        let frame = frame(for: job)
+        if panel.frame != frame {
+            panel.setFrame(frame, display: true)
+        }
+    }
+
+    private func frame(for job: HUDJob) -> NSRect {
+        let size = NSSize(width: 286, height: 78)
+        let stacked = CGFloat(stackIndex(of: job.id)) * (size.height + 8)
+        let origin = NSPoint(x: job.anchor.x + 28, y: job.anchor.y - size.height - 28 - stacked)
+        return NSRect(origin: origin, size: size)
+    }
+
     private func stackIndex(of id: UUID) -> Int {
-        Array(panels.keys).firstIndex(of: id) ?? panels.count
+        order.firstIndex(of: id) ?? order.count
     }
 
     private func makePanel() -> NSPanel {
