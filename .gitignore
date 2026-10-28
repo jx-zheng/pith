@@ -6,5 +6,4 @@ build/
 *.xcodeproj
 xcuserdata/
 *.xcuserstate
-App/*.xcassets
 uploads/
