@@ -26,8 +26,9 @@ public struct ProgressPublishGate: Equatable {
     /// True when `fraction` should reach the HUD. The first sample always publishes.
     public mutating func shouldPublish(_ fraction: Double, now: TimeInterval) -> Bool {
         if let lastFraction, let lastTime {
-            let moved = abs(fraction - lastFraction) >= minDelta
-            let aged = now - lastTime >= minInterval
+            // 0.015 - 0.01 is ~0.0049999 in Double, just under a literal 0.005.
+            let moved = abs(fraction - lastFraction) >= minDelta - 1e-9
+            let aged = now - lastTime >= minInterval - 1e-9
             if !moved && !aged { return false }
         }
         markPublished(fraction, now: now)

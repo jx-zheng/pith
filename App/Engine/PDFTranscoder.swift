@@ -10,7 +10,7 @@ enum PDFTranscoder {
         dpi: Double,
         location: OutputLocation,
         quality: Double?,
-        exists: @escaping (String) -> Bool
+        exists: (String) -> Bool
     ) throws -> [URL] {
         guard let document = PDFDocument(url: source) else {
             throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent) as a PDF.")
@@ -21,7 +21,6 @@ enum PDFTranscoder {
         let scale = CGFloat(dpi / 72.0)
         var written: [String] = []
         var urls: [URL] = []
-        let combined: (String) -> Bool = { exists($0) || written.contains($0) }
         for index in 0..<document.pageCount {
             try autoreleasepool {
                 guard let page = document.page(at: index) else { return }
@@ -49,7 +48,7 @@ enum PDFTranscoder {
                     outputExtension: format.primaryExtension,
                     location: location,
                     style: .page(number: index + 1, count: document.pageCount),
-                    exists: combined
+                    exists: { exists($0) || written.contains($0) }
                 )
                 let url = URL(fileURLWithPath: path)
                 try ImageIOBridge.write(image, to: url, uti: format.uti, quality: quality)
@@ -137,7 +136,7 @@ enum PDFTranscoder {
         return [destination]
     }
 
-    static func split(source: URL, location: OutputLocation, exists: @escaping (String) -> Bool) throws -> [URL] {
+    static func split(source: URL, location: OutputLocation, exists: (String) -> Bool) throws -> [URL] {
         guard let document = PDFDocument(url: source), document.pageCount > 0 else {
             throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
         }
