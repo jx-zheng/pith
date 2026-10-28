@@ -78,10 +78,14 @@ final class UndoKeyTap {
             disarmIfExpired()
             return
         }
-        disarmTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: false) { [weak self] _ in
+        // Unscheduled, then added in common modes. `scheduledTimer` only runs in the default
+        // mode, so a menu or slider tracking loop would keep the tap alive past the window.
+        let timer = Timer(timeInterval: interval, repeats: false) { [weak self] _ in
             self?.disarmIfExpired()
         }
-        disarmTimer?.tolerance = 0.05
+        timer.tolerance = 0.05
+        RunLoop.main.add(timer, forMode: .common)
+        disarmTimer = timer
     }
 
     private func disarmIfExpired() {

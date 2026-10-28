@@ -19,7 +19,11 @@ struct EditorImage {
 
     func fullImage() throws -> CGImage {
         if preview.width == pixelWidth && preview.height == pixelHeight { return preview }
-        return try ImageIOBridge.loadOriented(source)
+        let full = try ImageIOBridge.loadOriented(source)
+        guard full.width == pixelWidth, full.height == pixelHeight else {
+            throw ConversionFailure.unreadable("\(source.lastPathComponent) changed on disk while it was open, so this edit wasn't applied.")
+        }
+        return full
     }
 
     func cropSource(for rect: PixelRect) throws -> (CGImage, PixelRect) {
