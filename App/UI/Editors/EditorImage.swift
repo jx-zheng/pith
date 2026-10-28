@@ -20,7 +20,8 @@ struct EditorImage {
     func fullImage() throws -> CGImage {
         if preview.width == pixelWidth && preview.height == pixelHeight { return preview }
         let full = try ImageIOBridge.loadOriented(source)
-        guard full.width == pixelWidth, full.height == pixelHeight else {
+        // ImageIO's 16000px thumbnail can land 1px off editorPixelSize's rounded short edge.
+        guard abs(full.width - pixelWidth) <= 1, abs(full.height - pixelHeight) <= 1 else {
             throw ConversionFailure.unreadable("\(source.lastPathComponent) changed on disk while it was open, so this edit wasn't applied.")
         }
         return full
