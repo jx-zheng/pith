@@ -16,11 +16,11 @@ struct CropEditor: View {
     @State private var aspect: AspectPreset = .free
     @State private var crop: PixelRect
 
-    init(image: CGImage, pixelWidth: Int? = nil, pixelHeight: Int? = nil, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void,
+    init(image: CGImage, pixelWidth: Int, pixelHeight: Int, onClose: @escaping () -> Void, onApply: @escaping (PixelRect) -> Void,
          onReplace: ((PixelRect) -> Void)? = nil, replaceBlocker: String? = nil) {
         self.image = image
-        self.pixelWidth = pixelWidth ?? image.width
-        self.pixelHeight = pixelHeight ?? image.height
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
         self.onClose = onClose
         self.onApply = onApply
         self.onReplace = onReplace
@@ -258,14 +258,6 @@ struct AddBackgroundEditor: View {
     var pixelHeight: Int
     var onClose: () -> Void
     var onApply: (BackgroundEdit) -> Void
-
-    init(image: CGImage, pixelWidth: Int? = nil, pixelHeight: Int? = nil, onClose: @escaping () -> Void, onApply: @escaping (BackgroundEdit) -> Void) {
-        self.image = image
-        self.pixelWidth = pixelWidth ?? image.width
-        self.pixelHeight = pixelHeight ?? image.height
-        self.onClose = onClose
-        self.onApply = onApply
-    }
 
     @State private var padding: Double = 160
     // Corners and shadow are relative, so they look the same on a 400 px icon and a 6K screenshot.

@@ -12,24 +12,6 @@ struct AnnotateEditor: View {
     var onReplace: (([AnnotationMark]) -> Void)? = nil
     var replaceBlocker: String? = nil
 
-    init(
-        image: CGImage,
-        pixelWidth: Int? = nil,
-        pixelHeight: Int? = nil,
-        onClose: @escaping () -> Void,
-        onApply: @escaping ([AnnotationMark]) -> Void,
-        onReplace: (([AnnotationMark]) -> Void)? = nil,
-        replaceBlocker: String? = nil
-    ) {
-        self.image = image
-        self.pixelWidth = pixelWidth ?? image.width
-        self.pixelHeight = pixelHeight ?? image.height
-        self.onClose = onClose
-        self.onApply = onApply
-        self.onReplace = onReplace
-        self.replaceBlocker = replaceBlocker
-    }
-
     @State private var marks: [AnnotationMark] = []
     @State private var draft: [CGPoint] = []
     @State private var tool: AnnotationMark.Kind = .pen
@@ -241,24 +223,6 @@ struct RedactEditor: View {
     @State private var boxes: [CGRect] = []
     @State private var draft: CGRect?
 
-    init(
-        image: CGImage,
-        pixelWidth: Int? = nil,
-        pixelHeight: Int? = nil,
-        onClose: @escaping () -> Void,
-        onApply: @escaping ([CGRect]) -> Void,
-        onReplace: (([CGRect]) -> Void)? = nil,
-        replaceBlocker: String? = nil
-    ) {
-        self.image = image
-        self.pixelWidth = pixelWidth ?? image.width
-        self.pixelHeight = pixelHeight ?? image.height
-        self.onClose = onClose
-        self.onApply = onApply
-        self.onReplace = onReplace
-        self.replaceBlocker = replaceBlocker
-    }
-
     var body: some View {
         EditorChrome(title: "Redact", primaryTitle: onReplace == nil ? "Save" : "Save as New", onClose: onClose, onReset: { boxes = []; draft = nil }, onPrimary: { apply(onApply) },
                      replace: onReplace.map { handler in ReplaceButton(blocker: replaceBlocker) { apply(handler) } }) {
@@ -445,7 +409,7 @@ struct CompressEditor: View {
     var originalBytes: Int64
     var isVideo: Bool
     var onClose: () -> Void
-    var onApplyImage: ((CGImage, Double, Int) -> Void)?
+    var onApplyImage: ((Double, Int) -> Void)?
     var onApplyVideo: ((Double) -> Void)?
 
     @State private var quality: Double = 0.7
@@ -488,8 +452,8 @@ struct CompressEditor: View {
     private func apply() {
         if isVideo {
             onApplyVideo?(bitrate)
-        } else if let image {
-            onApplyImage?(image, quality, Int(maxEdge))
+        } else if image != nil {
+            onApplyImage?(quality, Int(maxEdge))
         }
     }
 }

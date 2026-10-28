@@ -594,10 +594,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         originalBytes: payload.1,
                         isVideo: payload.0,
                         onClose: close,
-                        onApplyImage: { _, quality, maxEdge in
+                        onApplyImage: { quality, maxEdge in
                             self.save(source: url) { engine in
-                                let full = try payload.2?.fullImage() ?? ImageIOBridge.loadOriented(url)
-                                return try engine.compressImage(full, source: url, quality: quality, maxEdge: maxEdge)
+                                guard let loaded = payload.2 else {
+                                    throw ConversionFailure.unreadable("Couldn't read \(url.lastPathComponent).")
+                                }
+                                return try engine.compressImage(try loaded.fullImage(), source: url, quality: quality, maxEdge: maxEdge)
                             }
                             close()
                         },

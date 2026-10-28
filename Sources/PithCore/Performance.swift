@@ -39,31 +39,3 @@ public struct ProgressPublishGate: Equatable {
         lastTime = now
     }
 }
-
-/// When a drag monitor is allowed to read file URLs off the drag pasteboard.
-public enum DragPasteboardRead: Equatable, Sendable {
-    /// Idle, or a drag that already proved it isn't files. Don't touch the pasteboard.
-    case skip
-    /// Pressed, dragging, or wheel: read URLs only after `changeCount` moves.
-    case urlsWhenChangeCountChanges
-}
-
-public enum DragPasteboardPolicy {
-    public static func read(for phase: DragPhase) -> DragPasteboardRead {
-        switch phase {
-        case .idle, .nonFileDrag:
-            return .skip
-        case .pressed, .dragging, .wheel:
-            return .urlsWhenChangeCountChanges
-        }
-    }
-
-    public static func shouldReadURLs(phase: DragPhase, changeCount: Int, cachedChangeCount: Int) -> Bool {
-        switch read(for: phase) {
-        case .skip:
-            return false
-        case .urlsWhenChangeCountChanges:
-            return changeCount != cachedChangeCount
-        }
-    }
-}

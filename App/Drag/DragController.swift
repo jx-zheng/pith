@@ -105,8 +105,8 @@ final class DragController {
             lastPromiseChangeCount = nil
             return .mouseDown(time: time, changeCount: count, location: location)
         case .leftMouseDragged:
-            switch DragPasteboardPolicy.read(for: machine.phase) {
-            case .skip:
+            switch machine.phase {
+            case .idle, .nonFileDrag:
                 return .mouseDragged(
                     time: time,
                     changeCount: cached.changeCount,
@@ -115,9 +115,9 @@ final class DragController {
                     hasFilePromise: false,
                     promisedTypeIdentifiers: []
                 )
-            case .urlsWhenChangeCountChanges:
+            case .pressed(_), .dragging(_), .wheel(_, _):
                 let count = NSPasteboard(name: .drag).changeCount
-                if DragPasteboardPolicy.shouldReadURLs(phase: machine.phase, changeCount: count, cachedChangeCount: cached.changeCount) {
+                if count != cached.changeCount {
                     cached = readSnapshot()
                 }
                 return .mouseDragged(

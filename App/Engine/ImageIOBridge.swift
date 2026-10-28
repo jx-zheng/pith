@@ -365,7 +365,6 @@ enum ImageAdjust {
     static let context = CIContext(options: [.cacheIntermediates: false])
 
     static func render(_ image: CGImage, brightness: Double, contrast: Double, saturation: Double, sharpness: Double) -> CGImage? {
-        if brightness == 0, contrast == 1, saturation == 1, sharpness <= 0.01 { return image }
         let ci = CIImage(cgImage: image)
         guard let controls = CIFilter(name: "CIColorControls") else { return image }
         controls.setValue(ci, forKey: kCIInputImageKey)

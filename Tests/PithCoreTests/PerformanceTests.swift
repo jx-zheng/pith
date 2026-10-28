@@ -21,22 +21,4 @@ final class PerformanceTests: XCTestCase {
         XCTAssertTrue(gate.shouldPublish(0.016, now: 0.15), "100ms since the last publish")
         XCTAssertTrue(gate.shouldPublish(0.0, now: 0.15), "a backwards jump of 0.5% still publishes")
     }
-
-    func testPasteboardReadsArePhaseGated() {
-        XCTAssertEqual(DragPasteboardPolicy.read(for: .idle), .skip)
-        XCTAssertEqual(DragPasteboardPolicy.read(for: .nonFileDrag), .skip)
-        let session = DragSession(
-            changeCount: 1, filePaths: ["/a"], hasFilePromise: false,
-            promisedTypeIdentifiers: [], location: .zero
-        )
-        XCTAssertEqual(DragPasteboardPolicy.read(for: .pressed(baselineChangeCount: 1)), .urlsWhenChangeCountChanges)
-        XCTAssertEqual(DragPasteboardPolicy.read(for: .dragging(session)), .urlsWhenChangeCountChanges)
-        XCTAssertEqual(DragPasteboardPolicy.read(for: .wheel(session, .convert)), .urlsWhenChangeCountChanges)
-
-        let pressed = DragPhase.pressed(baselineChangeCount: 4)
-        XCTAssertFalse(DragPasteboardPolicy.shouldReadURLs(phase: pressed, changeCount: 4, cachedChangeCount: 4))
-        XCTAssertTrue(DragPasteboardPolicy.shouldReadURLs(phase: pressed, changeCount: 5, cachedChangeCount: 4))
-        XCTAssertFalse(DragPasteboardPolicy.shouldReadURLs(phase: .idle, changeCount: 9, cachedChangeCount: 1))
-        XCTAssertFalse(DragPasteboardPolicy.shouldReadURLs(phase: .nonFileDrag, changeCount: 9, cachedChangeCount: 1))
-    }
 }
