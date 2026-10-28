@@ -21,6 +21,8 @@ final class DragController {
 
     private var monitors: [Any] = []
     private var lastPromiseChangeCount: Int?
+    /// Last drag-pasteboard read. URLs are refreshed only when `changeCount` moves.
+    private var cached = DragPasteboardSnapshot(changeCount: 0, filePaths: [], hasFilePromise: false, promisedTypeIdentifiers: [])
 
     init(bindings: KeyBindings) {
         machine = DragGestureMachine(bindings: bindings)
@@ -97,25 +99,36 @@ final class DragController {
         let location = Point(x: NSEvent.mouseLocation.x, y: NSEvent.mouseLocation.y)
         switch event.type {
         case .leftMouseDown:
-            let snap = DragPasteboardReader.snapshot(readPromiseTypes: false)
+            // Baseline only. File URLs arrive on the first drag whose change count actually moves.
+            let count = NSPasteboard(name: .drag).changeCount
+            cached = DragPasteboardSnapshot(changeCount: count, filePaths: [], hasFilePromise: false, promisedTypeIdentifiers: [])
             lastPromiseChangeCount = nil
-            return .mouseDown(time: time, changeCount: snap.changeCount, location: location)
+            return .mouseDown(time: time, changeCount: count, location: location)
         case .leftMouseDragged:
-            let snap = DragPasteboardReader.snapshot(readPromiseTypes: false)
-            var promised = snap.promisedTypeIdentifiers
-            if snap.hasFilePromise && lastPromiseChangeCount != snap.changeCount {
-                let detailed = DragPasteboardReader.snapshot(readPromiseTypes: true)
-                promised = detailed.promisedTypeIdentifiers
-                lastPromiseChangeCount = snap.changeCount
+            switch machine.phase {
+            case .idle, .nonFileDrag:
+                return .mouseDragged(
+                    time: time,
+                    changeCount: cached.changeCount,
+                    location: location,
+                    filePaths: [],
+                    hasFilePromise: false,
+                    promisedTypeIdentifiers: []
+                )
+            case .pressed(_), .dragging(_), .wheel(_, _):
+                let count = NSPasteboard(name: .drag).changeCount
+                if count != cached.changeCount {
+                    cached = readSnapshot()
+                }
+                return .mouseDragged(
+                    time: time,
+                    changeCount: cached.changeCount,
+                    location: location,
+                    filePaths: cached.filePaths,
+                    hasFilePromise: cached.hasFilePromise,
+                    promisedTypeIdentifiers: cached.promisedTypeIdentifiers
+                )
             }
-            return .mouseDragged(
-                time: time,
-                changeCount: snap.changeCount,
-                location: location,
-                filePaths: snap.filePaths,
-                hasFilePromise: snap.hasFilePromise,
-                promisedTypeIdentifiers: promised
-            )
         case .leftMouseUp:
             return .mouseUp(time: time, location: location)
         case .flagsChanged:
@@ -125,6 +138,20 @@ final class DragController {
         default:
             return .keyDown(time: time, key: .other)
         }
+    }
+
+    /// Full URL read. Promise type identifiers are fetched once per change count.
+    private func readSnapshot() -> DragPasteboardSnapshot {
+        let snap = DragPasteboardReader.snapshot(readPromiseTypes: false)
+        guard snap.hasFilePromise, lastPromiseChangeCount != snap.changeCount else { return snap }
+        let detailed = DragPasteboardReader.snapshot(readPromiseTypes: true)
+        lastPromiseChangeCount = snap.changeCount
+        return DragPasteboardSnapshot(
+            changeCount: snap.changeCount,
+            filePaths: snap.filePaths,
+            hasFilePromise: snap.hasFilePromise,
+            promisedTypeIdentifiers: detailed.promisedTypeIdentifiers
+        )
     }
 
     private func modifierFlags(from event: NSEvent) -> ModifierFlags {
