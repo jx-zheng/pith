@@ -10,7 +10,7 @@ enum PDFTranscoder {
         dpi: Double,
         location: OutputLocation,
         quality: Double?,
-        exists: (String) -> Bool
+        exists: @escaping (String) -> Bool
     ) throws -> [URL] {
         guard let document = PDFDocument(url: source) else {
             throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent) as a PDF.")
@@ -137,7 +137,7 @@ enum PDFTranscoder {
         return [destination]
     }
 
-    static func split(source: URL, location: OutputLocation, exists: (String) -> Bool) throws -> [URL] {
+    static func split(source: URL, location: OutputLocation, exists: @escaping (String) -> Bool) throws -> [URL] {
         guard let document = PDFDocument(url: source), document.pageCount > 0 else {
             throw ConversionFailure.unreadable("Couldn't open \(source.lastPathComponent).")
         }
