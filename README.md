@@ -6,6 +6,17 @@ Interaction model: a glass donut wheel under the pointer, a red-orange hover wed
 
 Bundle id: `com.kevinzheng.pith`. Deployment target: macOS 14. The app is not sandboxed and is not distributed through the App Store.
 
+
+## Screenshots
+
+![Convert wheel](docs/screenshots/wheel.png)
+
+Convert wheel while dragging a file (Shift).
+
+![Settings](docs/screenshots/settings.png)
+
+Settings: accents, wheel modifiers, favourites, and output.
+
 ## Build
 
 On the Mac:
