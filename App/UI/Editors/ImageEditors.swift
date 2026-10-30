@@ -206,7 +206,8 @@ private struct CropCanvas: View {
             ForEach(CropHandle.allCases.filter { $0 != .move }, id: \.self) { handle in
                 RoundedRectangle(cornerRadius: 1)
                     .fill(PithTheme.highlight)
-                    .frame(width: handle.isCorner ? 14 : 18, height: handle.isCorner ? 14 : 5)
+                    .frame(width: handle.isCorner ? 14 : (handle.isHorizontalEdge ? 18 : 5),
+                           height: handle.isCorner ? 14 : (handle.isHorizontalEdge ? 5 : 18))
                     .position(handle.point(in: rect))
             }
         }
@@ -214,9 +215,27 @@ private struct CropCanvas: View {
 
     private func hitHandle(at point: CGPoint, fitted: CGRect) -> CropHandle {
         let rect = viewRect(fitted: fitted)
-        for handle in CropHandle.allCases where hypot(handle.point(in: rect).x - point.x, handle.point(in: rect).y - point.y) < 18 {
-            return handle
+        // Corners beat edges; never distance-test `.move` (its center point stole small-crop handle hits).
+        let cornerSlop: CGFloat = 16
+        let edgeSlop: CGFloat = 12
+        let corners: [(CropHandle, CGPoint)] = [
+            (.topLeft, CGPoint(x: rect.minX, y: rect.minY)),
+            (.topRight, CGPoint(x: rect.maxX, y: rect.minY)),
+            (.bottomLeft, CGPoint(x: rect.minX, y: rect.maxY)),
+            (.bottomRight, CGPoint(x: rect.maxX, y: rect.maxY))
+        ]
+        for (handle, anchor) in corners {
+            if abs(point.x - anchor.x) <= cornerSlop && abs(point.y - anchor.y) <= cornerSlop {
+                return handle
+            }
         }
+        // Full edge strips (not just midpoints) so dragging the border resizes instead of moving.
+        let alongTopBottom = point.x >= rect.minX - edgeSlop && point.x <= rect.maxX + edgeSlop
+        let alongLeftRight = point.y >= rect.minY - edgeSlop && point.y <= rect.maxY + edgeSlop
+        if alongTopBottom && abs(point.y - rect.minY) <= edgeSlop { return .top }
+        if alongTopBottom && abs(point.y - rect.maxY) <= edgeSlop { return .bottom }
+        if alongLeftRight && abs(point.x - rect.minX) <= edgeSlop { return .left }
+        if alongLeftRight && abs(point.x - rect.maxX) <= edgeSlop { return .right }
         return rect.contains(point) ? .move : .bottomRight
     }
 }
@@ -226,6 +245,12 @@ private enum CropHandle: CaseIterable {
     var isCorner: Bool {
         switch self {
         case .topLeft, .topRight, .bottomLeft, .bottomRight: return true
+        default: return false
+        }
+    }
+    var isHorizontalEdge: Bool {
+        switch self {
+        case .top, .bottom: return true
         default: return false
         }
     }
