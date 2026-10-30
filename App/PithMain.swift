@@ -94,7 +94,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if !AccessibilityPermission.isTrusted(prompt: false) {
             showOnboarding()
         } else if !MenuBarPreference.isVisible && !launchedAsLoginItem {
-            // No icon to click, so a manual launch is how Kevin gets back to Settings.
+            // No icon to click, so a manual launch is how the user gets back to Settings.
             showSettings()
         }
     }

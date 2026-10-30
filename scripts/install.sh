@@ -10,8 +10,10 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$HOME/.local/bin"
 APPS="$HOME/Applications"
-TEAM="${PITH_TEAM:-LKLHZWRD5Y}"
-IDENTITY="${PITH_IDENTITY:-D3141EDAD55BE030AC6B09A4714AA3B4D2A44AB1}"
+# Optional: export PITH_TEAM / PITH_IDENTITY for Manual signing.
+# Unset → Automatic (Xcode picks your signed-in Apple ID team).
+TEAM="${PITH_TEAM:-}"
+IDENTITY="${PITH_IDENTITY:-}"
 XCODEGEN="${XCODEGEN:-$(command -v xcodegen || echo "$HOME/.local/opt/xcodegen/bin/xcodegen")}"
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$BIN" "$APPS"
@@ -89,8 +91,14 @@ build_and_install() {
   cd "$REPO"
   log "Generating project"; "$XCODEGEN" generate >/dev/null
   log "Building Pith"
+  SIGN_ARGS=()
+  if [ -n "$TEAM" ] && [ -n "$IDENTITY" ]; then
+    SIGN_ARGS=(DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY")
+  else
+    SIGN_ARGS=(CODE_SIGN_STYLE=Automatic)
+  fi
   xcodebuild -project Pith.xcodeproj -scheme Pith -configuration Debug -derivedDataPath build \
-    DEVELOPMENT_TEAM="$TEAM" CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="$IDENTITY" build \
+    "${SIGN_ARGS[@]}" build \
     > /tmp/pith_build.log 2>&1 || { grep -E "error:" /tmp/pith_build.log | sort -u; exit 1; }
   log "Installing to $APPS/Pith.app"
   # Wait for the old copy to exit: a new launch hands off to (and quits for) a running one.
