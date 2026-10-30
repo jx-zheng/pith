@@ -2,9 +2,9 @@
 
 Pith is a personal macOS menu-bar app. Drag a file, tap a modifier, and a radial wheel appears under the pointer. Drop on a segment and the conversion is written next to the source.
 
-The interaction and the look follow a menu-bar converter's author demo: a glass donut, a red-orange hover wedge, a centre pill, a small progress HUD, and warm tool windows. Pith does not use that app's name, logo, or icon. The menu-bar glyph is a plain template donut. Finder uses a separate slate squircle with a picture plate, from `App/Assets.xcassets`.
+Interaction model: a glass donut wheel under the pointer, a red-orange hover wedge, a centre pill, a small progress HUD, and warm tool windows. The menu-bar glyph is a plain template donut. Finder uses a separate slate squircle with a picture plate, from `App/Assets.xcassets`.
 
-Bundle id: `com.kevinzheng.pith`. Deployment target: macOS 14. The app is not sandboxed. It is for personal use, not the App Store.
+Bundle id: `com.kevinzheng.pith`. Deployment target: macOS 14. The app is not sandboxed and is not distributed through the App Store.
 
 ## Build
 
@@ -85,6 +85,8 @@ scripts/install.sh --app    # just build and install Pith
 
 The script uses Homebrew when the current user owns it. Otherwise it installs per user: ffmpeg, ffprobe and pandoc go to `~/.local/bin`, and LibreOffice goes to `~/Applications`. Pith looks in both places.
 
+Signing defaults to Automatic (your signed-in Apple ID team in Xcode). For Manual signing, export `PITH_TEAM` and `PITH_IDENTITY` before running `scripts/install.sh --app`.
+
 ### Homebrew
 
 ```bash
@@ -107,17 +109,17 @@ All sampled colour, type, and wheel geometry live in `App/UI/Theme.swift`.
 - Image wheel, clockwise from 12: PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF, GIF.
 - Tool wheel, clockwise from 12: COMPRESS, METADATA, EDIT, ANNOTATE, ADD BG, CROP, REDACT.
 
-SwiftUI previews in `App/Preview/PithPreviews.swift` hard-code those three wheels, the “Converting to JPG” HUD, and the Crop, Add BG, Annotate, Redact, Edit, Metadata, and Compress windows. Open them in the Xcode canvas against the demo frames.
+SwiftUI previews in `App/Preview/PithPreviews.swift` hard-code those three wheels, the “Converting to JPG” HUD, and the Crop, Add BG, Annotate, Redact, Edit, Metadata, and Compress windows. Open them in the Xcode canvas to review layout without a live drag.
 
 ### Visual gaps
 
-- The demo's image wheel showed DOCX in the last slot. Pith puts GIF there. DOCX is not an image target, and a JPEG wheel that included it would not match the other seven labels.
-- Previews paint the demo wallpaper as a gradient. The real panel blurs whatever is behind the cursor, so the cream wedges shift with the desktop. The canvas cannot show that blur.
+- Image wheel last slot is GIF (not DOCX). DOCX is not an image target, and a JPEG wheel that included it would not match the other seven labels.
+- Previews paint a gradient stand-in for the desktop. The real panel blurs whatever is behind the cursor, so the cream wedges shift with the wallpaper. The canvas cannot show that blur.
 - Segment outlines are a polyline arc (28 steps) plus quadratic corners, in y-down space. A true `addArc` would fight that coordinate system.
-- Tracking, corner radius, and the 6.5° gap are sampled from a 720p frame of a 400 pt control. If a wedge looks tight against the frame, change `PithTheme` only.
+- Tracking, corner radius, and the 6.5° gap are tuned for a 400 pt control. If a wedge looks tight, change `PithTheme` only.
 - The system drag image, the blue filename capsule, and the green plus badge are not drawn by Pith.
 - SF Pro is the system font at the sizes in `PithTheme`. It is not bundled.
-- Crop uses orange corner handles and an even-odd dim outside the rect. Add BG uses padding, corner, and shadow sliders plus the gradient and solid swatches from the frames. Both are approximations of the filmed chrome, not pixel traces of every control.
+- Crop uses orange corner handles and an even-odd dim outside the rect. Add BG uses padding, corner, and shadow sliders plus gradient and solid swatches.
 
 ## Layout
 
@@ -140,31 +142,16 @@ App/Actions/FileActions.swift
 App/QuickLook.swift
 ```
 
-## What was verified here
+## Tests
 
-`swift test` runs the package only. Last run: 47 tests, 0 failures, covering the gesture state machine, wheel hit testing, keyboard navigation, output names, offer order for PDF / JPEG / video / audio / documents, ffmpeg argv (including videotoolbox-then-software and the GIF palette pass), pandoc and soffice argv, CSV↔TSV quoting, and crop aspect math.
+`swift test` runs the `PithCore` package only (Linux-friendly). Last run here: 47 tests, 0 failures — gesture state machine, wheel hit testing, keyboard navigation, output names, offer order, ffmpeg/pandoc/soffice argv, CSV↔TSV, crop aspect math.
 
-Not compilable on this machine: anything under `App/`. There is no AppKit, ImageIO, PDFKit, AVFoundation, or SwiftUI.
-
-## AppKit APIs to check first in Xcode
-
-These are the calls most likely to be wrong. The names match the headers I aimed at; the signatures still want a real SDK.
-
-1. `NSFilePromiseReceiver.readableDraggedTypes` — mapped with `NSPasteboard.PasteboardType($0)`. If the SDK already returns pasteboard types, that map will not compile. Drop the conversion.
-2. `NSFilePromiseReceiver.receivePromisedFiles(atDestination:options:operationQueue:reader:)`. `beginReceive` calls it synchronously inside `performDragOperation`, before the drag pasteboard dies. Confirm Photos, Mail, and browser promises still deliver.
-3. Global `keyDown` during a Finder drag. The monitor is installed, and `WheelNavigation` handles arrows, 1–9, and Return. A foreign drag loop may never deliver `keyDown` to a global monitor. Global monitors also cannot consume the event. If arrows do nothing while dragging, that is this limitation, not the wheel math.
-4. `kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String` inside `AXIsProcessTrustedWithOptions`. The prompt runs only from the onboarding button and the menu, not on every launch.
-5. `NSAttributedString.DocumentType.officeOpenXML` for DOCX without pandoc.
-6. `PDFPage.draw(with:to:)` and `PDFPage(image:)`.
-7. `AVAssetExportSession.exportAsynchronously` and `session.progress` on macOS 14. The async `export(to:as:)` API is newer and is not used. If export throws and ffmpeg exists, the job falls back.
-8. `SMAppService.mainApp` register / unregister / status, and `openSystemSettingsLoginItems()`.
-9. `QLPreviewPanel` from an `LSUIElement` app. `QuickLook.swift` orders a 8 pt borderless window, makes a view first responder, and adopts the panel. If the panel never appears, this responder chain is the first place to look. Recent items fall back to revealing in Finder when the path is missing.
-10. `NSWorkspace.open(_:withApplicationAt:configuration:)` for Terminal. It opens the folder in Terminal.app; it does not `cd` a new shell beyond what Terminal does with a folder URL.
-11. `sender.draggingLocation` is window-base, y-up. The wheel flips it before hit testing. If the highlight is mirrored vertically, that flip is the suspect.
-12. The SwiftUI hosting view is not registered for drags, so the drop should hit `WheelDropView` underneath. If drops never land, register the hosting view or make it `hitTest` to nil outside the wedges.
-13. WebP and AVIF writes go through ImageIO first and ffmpeg on failure. ImageIO write support varies by macOS point release.
-14. Accessibility for a personal-team build survives rebuilds. An ad-hoc signature does not.
+The `App/` target needs Xcode (AppKit, ImageIO, PDFKit, AVFoundation, SwiftUI). Sign with a personal team; avoid ad-hoc (`codesign -s -`) so Accessibility grants survive rebuilds.
 
 ## Output names
 
-Beside the source, collisions become `name 2.ext`, then `name 3.ext`. A conversion never overwrites the file you dropped. Tool suffixes follow the frames: `Page 001 Cropped.jpg`, plus `Background`, `Annotated`, `Redacted`, `Edited`, `Compressed`, `Clean`, `Trimmed`, `Merged`. Multi-page PDF renders use `name page N.ext`. File-promise drags land in a temp directory and are then written to Downloads, or to the fixed folder from Settings.
+Beside the source, collisions become `name 2.ext`, then `name 3.ext`. A conversion never overwrites the file you dropped. Tool suffixes: `Page 001 Cropped.jpg`, plus `Background`, `Annotated`, `Redacted`, `Edited`, `Compressed`, `Clean`, `Trimmed`, `Merged`. Multi-page PDF renders use `name page N.ext`. File-promise drags land in a temp directory and are then written to Downloads, or to the fixed folder from Settings.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
