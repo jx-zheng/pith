@@ -16,23 +16,27 @@ final class GestureEdgeCaseTests: XCTestCase {
         return machine.handle(.flagsChanged(time: time + 0.1, flags: []))
     }
 
-    func testRepeatTapOnOpenWheelIsADoubleTap() {
+    func testShiftTapCyclesAndDoesNotDismiss() {
         var machine = dragging()
         XCTAssertEqual(tap(&machine, .shift, at: 1).count, 1)
-        XCTAssertEqual(tap(&machine, .shift, at: 1.3), [.repeatTap(.convert)])
-        if case .wheel(_, .convert) = machine.phase {} else { XCTFail("wheel should stay open, got \(machine.phase)") }
+        guard case .switchWheel(.tools, _)? = tap(&machine, .shift, at: 1.3).first else {
+            return XCTFail("second shift should cycle")
+        }
+        if case .wheel(_, .tools) = machine.phase {} else { XCTFail("wheel should stay open, got \(machine.phase)") }
     }
 
-    func testSwitchingWheelsThenEscapeThenReopen() {
+    func testCyclingWheelsThenEscapeThenReopen() {
         var machine = dragging()
         _ = tap(&machine, .shift, at: 1)
-        let switched = tap(&machine, .command, at: 1.5)
+        let switched = tap(&machine, .shift, at: 1.5)
         guard case .switchWheel(.tools, _)? = switched.first else { return XCTFail("\(switched)") }
+        XCTAssertEqual(tap(&machine, .command, at: 1.7), [], "command must not switch or dismiss")
         XCTAssertEqual(machine.handle(.keyDown(time: 2, key: .escape)), [.dismissWheel])
         if case .dragging = machine.phase {} else { XCTFail("escape should keep the drag") }
         _ = machine.handle(.mouseDragged(time: 2.2, changeCount: 2, location: Point(x: 40, y: 50), filePaths: files, hasFilePromise: false, promisedTypeIdentifiers: []))
-        let reopened = tap(&machine, .control, at: 3)
-        guard case let .showWheel(.actions, point, _)? = reopened.first else { return XCTFail("\(reopened)") }
+        XCTAssertEqual(tap(&machine, .control, at: 2.6), [])
+        let reopened = tap(&machine, .shift, at: 3)
+        guard case let .showWheel(.convert, point, _)? = reopened.first else { return XCTFail("\(reopened)") }
         XCTAssertEqual(point, Point(x: 40, y: 50), "reopens under the pointer, not where the drag began")
     }
 
@@ -50,6 +54,8 @@ final class GestureEdgeCaseTests: XCTestCase {
         XCTAssertEqual(tap(&machine, .shift, at: 0.2), [])
         XCTAssertEqual(machine.handle(.mouseUp(time: 0.5, location: .zero)), [])
         XCTAssertEqual(tap(&machine, .shift, at: 1), [.idleTap(.convert)])
+        XCTAssertEqual(tap(&machine, .command, at: 1.4), [])
+        XCTAssertEqual(tap(&machine, .control, at: 1.8), [])
     }
 
     func testPasteboardSwappedToNonFileMidDragKeepsTheFiles() {
@@ -75,13 +81,42 @@ final class GestureEdgeCaseTests: XCTestCase {
         XCTAssertEqual(machine.phase, .idle)
     }
 
-    func testUnboundAndRebindedKeys() {
+    func testOtherModifiersNeverOpenEvenWhenRebound() {
         var machine = dragging()
-        XCTAssertEqual(tap(&machine, .option, at: 1), [], "option isn't bound by default")
+        XCTAssertEqual(tap(&machine, .option, at: 1), [])
         var bindings = KeyBindings.default
+        bindings.convert = .command
         bindings.tools = .option
+        bindings.actions = .control
         machine.updateBindings(bindings)
-        guard case .showWheel(.tools, _, _)? = tap(&machine, .option, at: 2).first else { return XCTFail("rebinding ignored") }
+        XCTAssertEqual(tap(&machine, .option, at: 2), [])
+        XCTAssertEqual(tap(&machine, .command, at: 2.4), [])
+        XCTAssertEqual(tap(&machine, .control, at: 2.8), [])
+        guard case .showWheel(.convert, _, _)? = tap(&machine, .shift, at: 3.2).first else {
+            return XCTFail("shift still opens convert after a rebind")
+        }
+    }
+
+    func testWheelCycleOrderWraps() {
+        XCTAssertEqual(WheelKind.convert.next, .tools)
+        XCTAssertEqual(WheelKind.tools.next, .actions)
+        XCTAssertEqual(WheelKind.actions.next, .convert)
+    }
+
+    func testLegacyKeyBindingsDecodeLeniently() throws {
+        let partial = #"{"convert":"command","tools":"not-a-key","tapMaxDuration":0.22}"#
+        let bindings = try JSONDecoder().decode(KeyBindings.self, from: Data(partial.utf8))
+        XCTAssertEqual(bindings.convert, .command)
+        XCTAssertEqual(bindings.tools, .command, "unknown key falls back instead of failing the file")
+        XCTAssertEqual(bindings.actions, .control, "missing key falls back")
+        XCTAssertEqual(bindings.tapMaxDuration, 0.22)
+
+        let roundTrip = try JSONDecoder().decode(KeyBindings.self, from: JSONEncoder().encode(KeyBindings.default))
+        XCTAssertEqual(roundTrip, .default)
+
+        let settings = try JSONDecoder().decode(PithSettings.self, from: JSONEncoder().encode(PithSettings.default))
+        XCTAssertEqual(settings.bindings, .default)
+        XCTAssertEqual(settings.bindings.tapMaxDuration, 0.30)
     }
 
     func testChordedModifiersAreNotATap() {

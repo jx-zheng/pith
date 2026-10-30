@@ -62,17 +62,30 @@ final class GestureTests: XCTestCase {
         XCTAssertEqual(effects, [])
     }
 
-    func testCommandAndControlSelectTheirWheels() {
+    func testOnlyShiftOpensAndCyclesWheels() {
         var machine = armed()
-        _ = machine.handle(.flagsChanged(time: 1, flags: .command))
-        let tools = machine.handle(.flagsChanged(time: 1.1, flags: []))
-        XCTAssertEqual(tools.first, .showWheel(.tools, Point(x: 3, y: 4), session(at: Point(x: 3, y: 4))))
-        _ = machine.handle(.flagsChanged(time: 2, flags: .control))
-        let actions = machine.handle(.flagsChanged(time: 2.1, flags: []))
-        guard case let .switchWheel(kind, _) = actions.first else {
-            return XCTFail("expected switch, got \(actions)")
+        XCTAssertEqual(tap(&machine, .command, at: 1), [])
+        XCTAssertEqual(tap(&machine, .control, at: 1.4), [])
+        XCTAssertEqual(tap(&machine, .option, at: 1.8), [])
+        if case .dragging = machine.phase {} else { XCTFail("other modifiers should leave the drag alone") }
+
+        guard case .showWheel(.convert, _, _)? = tap(&machine, .shift, at: 2.2).first else {
+            return XCTFail("shift should open convert")
         }
-        XCTAssertEqual(kind, .actions)
+        guard case .switchWheel(.tools, _)? = tap(&machine, .shift, at: 2.6).first else {
+            return XCTFail("second shift should cycle to tools")
+        }
+        guard case .switchWheel(.actions, _)? = tap(&machine, .shift, at: 3.0).first else {
+            return XCTFail("third shift should cycle to actions")
+        }
+        guard case .switchWheel(.convert, _)? = tap(&machine, .shift, at: 3.4).first else {
+            return XCTFail("fourth shift should wrap back to convert")
+        }
+        if case .wheel(_, .convert) = machine.phase {} else { XCTFail("wheel should stay open on convert, got \(machine.phase)") }
+
+        XCTAssertEqual(tap(&machine, .command, at: 3.8), [], "command must not switch an open wheel")
+        XCTAssertEqual(tap(&machine, .control, at: 4.2), [])
+        if case .wheel(_, .convert) = machine.phase {} else { XCTFail("wheel kind changed, got \(machine.phase)") }
     }
 
     func testSameKeyDoesNotDismissWheel() {
@@ -81,8 +94,15 @@ final class GestureTests: XCTestCase {
         _ = machine.handle(.flagsChanged(time: 1.1, flags: []))
         _ = machine.handle(.flagsChanged(time: 1.4, flags: .shift))
         let again = machine.handle(.flagsChanged(time: 1.5, flags: []))
-        XCTAssertEqual(again, [.repeatTap(.convert)])
-        if case .wheel = machine.phase {} else { XCTFail("wheel should stay open") }
+        guard case .switchWheel(.tools, _)? = again.first else {
+            return XCTFail("expected cycle to tools, got \(again)")
+        }
+        if case .wheel(_, .tools) = machine.phase {} else { XCTFail("wheel should stay open, got \(machine.phase)") }
+    }
+
+    private func tap(_ machine: inout DragGestureMachine, _ flags: ModifierFlags, at time: Double) -> [GestureEffect] {
+        _ = machine.handle(.flagsChanged(time: time, flags: flags))
+        return machine.handle(.flagsChanged(time: time + 0.1, flags: []))
     }
 
     func testEscapeDismissesWheelButDragContinues() {
@@ -134,16 +154,6 @@ final class GestureTests: XCTestCase {
         var machine = openWheel()
         let effects = machine.handle(.keyDown(time: 3, key: .right))
         XCTAssertEqual(effects, [.wheelKey(.right)])
-    }
-
-    private func session(at point: Point) -> DragSession {
-        DragSession(
-            changeCount: 8,
-            filePaths: ["/tmp/a.png"],
-            hasFilePromise: false,
-            promisedTypeIdentifiers: [],
-            location: point
-        )
     }
 
     private func armed() -> DragGestureMachine {

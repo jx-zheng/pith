@@ -4,9 +4,6 @@ import SwiftUI
 import PithCore
 
 struct SettingsView: View {
-    @AppStorage(Favourites.key(.convert)) private var favConvert = ""
-    @AppStorage(Favourites.key(.tools)) private var favTools = ""
-    @AppStorage(Favourites.key(.actions)) private var favActions = ""
     @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
     @AppStorage(MenuBarPreference.key) private var showMenuBarIcon = true
     @ObservedObject var model: AppModel
@@ -40,16 +37,11 @@ struct SettingsView: View {
                 }
             }
             Section("Wheels") {
-                keyPicker("Convert", key: $model.settings.bindings.convert)
-                keyPicker("Tools", key: $model.settings.bindings.tools)
-                keyPicker("Actions", key: $model.settings.bindings.actions)
-                caption("Tap the key while dragging a file, or click a file in Finder and then tap it. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
-            }
-            Section("Double-tap favourites") {
-                favouritePicker("Convert", kind: .convert, selection: $favConvert)
-                favouritePicker("Tools", kind: .tools, selection: $favTools)
-                favouritePicker("Actions", kind: .actions, selection: $favActions)
-                caption("Double-tap a wheel's key to run its favourite straight away, with no aiming. It fires only when that segment is on the wheel and enabled for the file. Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
+                LabeledContent("Hotkey") {
+                    Text("Shift")
+                        .foregroundStyle(.secondary)
+                }
+                caption("Tap Shift while dragging a file, or click a file in Finder and then tap Shift. Each tap cycles Convert, then Tools, then Actions, then back to Convert. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't register. Escape dismisses the wheel.")
             }
             Section("Output") {
                 Picker("Location", selection: locationBinding) {
@@ -73,6 +65,7 @@ struct SettingsView: View {
                 sliderRow("JPEG quality", value: $model.settings.jpegQuality, in: 0.4...1, display: "\(Int((model.settings.jpegQuality * 100).rounded()))%")
                 sliderRow("HEIC quality", value: $model.settings.heicQuality, in: 0.4...1, display: "\(Int((model.settings.heicQuality * 100).rounded()))%")
                 sliderRow("PDF render", value: $model.settings.pdfRenderDPI, in: 72...600, display: "\(Int(model.settings.pdfRenderDPI.rounded())) DPI")
+                caption("Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
             }
             Section("Video") {
                 Picker("Codec", selection: $model.settings.videoCodec) {
@@ -113,7 +106,6 @@ struct SettingsView: View {
         .tint(PithTheme.highlight)
         .onAppear {
             refreshLoginCopy()
-            normaliseFavourites()
         }
         .onChange(of: model.settings) { _, _ in
             model.save()
@@ -162,14 +154,6 @@ struct SettingsView: View {
             .fixedSize(horizontal: false, vertical: true)
     }
 
-    private func keyPicker(_ title: String, key: Binding<TriggerKey>) -> some View {
-        Picker(title, selection: key) {
-            ForEach(TriggerKey.allCases, id: \.self) { trigger in
-                Text(trigger.rawValue.capitalized).tag(trigger)
-            }
-        }
-    }
-
     /// Label at the leading edge; fixed-width slider and value column at the trailing edge.
     private func sliderRow(_ title: String, value: Binding<Double>, in range: ClosedRange<Double>, display: String) -> some View {
         LabeledContent(title) {
@@ -182,51 +166,6 @@ struct SettingsView: View {
                 Text(display)
                     .monospacedDigit()
                     .frame(width: Self.valueWidth, alignment: .trailing)
-            }
-        }
-    }
-
-    /// Options come from `FavouriteCatalog`: every label that wheel can show, grouped.
-    /// The stored value stays the label string, so `Favourites.index` is unchanged.
-    private func favouritePicker(_ title: String, kind: WheelKind, selection: Binding<String>) -> some View {
-        let groups = FavouriteCatalog.groups(for: kind)
-        let known = Set(groups.flatMap(\.labels))
-        let current = selection.wrappedValue
-        return Picker(title, selection: selection) {
-            Text("None").tag("")
-            if !current.isEmpty && !known.contains(current) {
-                Text("\(current) (not on any wheel)").tag(current)
-            }
-            Divider()
-            if groups.count == 1, let only = groups.first {
-                ForEach(only.labels, id: \.self) { label in
-                    Text(label).tag(label)
-                }
-            } else {
-                ForEach(groups, id: \.title) { group in
-                    Section(group.title) {
-                        ForEach(group.labels, id: \.self) { label in
-                            Text(label).tag(label)
-                        }
-                    }
-                }
-            }
-        }
-        .pickerStyle(.menu)
-    }
-
-    /// Values typed into the old free-text fields ("jpg ", "copy path") snap to their picker label.
-    private func normaliseFavourites() {
-        let fields: [(WheelKind, Binding<String>)] = [(.convert, $favConvert), (.tools, $favTools), (.actions, $favActions)]
-        for (kind, binding) in fields {
-            let trimmed = binding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                if !binding.wrappedValue.isEmpty { binding.wrappedValue = "" }
-                continue
-            }
-            if let label = FavouriteCatalog.labels(for: kind).first(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }),
-               label != binding.wrappedValue {
-                binding.wrappedValue = label
             }
         }
     }

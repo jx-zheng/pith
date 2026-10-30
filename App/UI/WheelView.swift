@@ -137,20 +137,21 @@ struct WheelContainer: View {
                 .id(model.generation)
                 .transition(.asymmetric(
                     insertion: .modifier(
-                        active: WheelSwitchEffect(scale: 0.88, angle: -14, opacity: 0, blur: 3),
+                        active: WheelSwitchEffect(scale: 0.82, angle: -42, opacity: 0, blur: 6),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     ),
+                    // No blur on the way out, so a fast run of Shift taps cannot stack fogged rings.
                     removal: .modifier(
-                        active: WheelSwitchEffect(scale: 1.1, angle: 10, opacity: 0, blur: 4),
+                        active: WheelSwitchEffect(scale: 0.94, angle: 18, opacity: 0, blur: 0),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     )
                 ))
         }
-            .scaleEffect(model.appeared ? 1 : 0.84)
-            .opacity(model.appeared ? 1 : 0)
-            .onAppear { play() }
-            .onChange(of: model.replay) { _, _ in play() }
-            .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
+        .scaleEffect(model.appeared ? 1 : 0.84)
+        .opacity(model.appeared ? 1 : 0)
+        .onAppear { play() }
+        .onChange(of: model.replay) { _, _ in play() }
+        .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
     }
 
     private func play() {
@@ -163,8 +164,11 @@ struct WheelContainer: View {
     }
 }
 
-/// Scale, spin, fade and soften a whole wheel while it swaps for another.
-struct WheelSwitchEffect: ViewModifier {
+/// Scale, spin, fade and soften a whole wheel while Shift cycles to the next one.
+/// The outgoing ring turns clockwise and the incoming ring settles from the other side.
+/// `Equatable` is what `AnyTransition.modifier` requires. The effect is not `Animatable`,
+/// so blur is an in/out state rather than a per-frame filter.
+struct WheelSwitchEffect: ViewModifier, Equatable {
     var scale: CGFloat
     var angle: Double
     var opacity: Double

@@ -87,7 +87,7 @@ public enum FileActionID: String, Codable, Sendable, Equatable, CaseIterable {
 }
 
 public enum ToolRegistry {
-    /// Command-wheel tools. Image tools match the reference order, clockwise from 12 o'clock.
+    /// Tools-wheel tools. Image tools match the reference order, clockwise from 12 o'clock.
     public static func tools(for inputs: [FileType], tools: ToolAvailability, fileCount: Int) -> [ToolOffer] {
         let kinds = Set(inputs.map(\.kind))
         if kinds.isEmpty { return [] }
