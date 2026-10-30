@@ -1,6 +1,6 @@
 # Pith
 
-Pith is a personal macOS menu-bar app. Drag a file, tap a modifier, and a radial wheel appears under the pointer. Drop on a segment and the conversion is written next to the source.
+Pith is a personal macOS menu-bar app. Drag a file, tap Shift, and a radial wheel appears under the pointer. Drop on a segment and the conversion is written next to the source.
 
 Interaction model: a glass donut wheel under the pointer, a red-orange hover wedge, a centre pill, a small progress HUD, and warm tool windows. The menu-bar glyph is a plain template donut. Finder uses a separate slate squircle with a picture plate, from `App/Assets.xcassets`.
 
@@ -15,7 +15,7 @@ Convert wheel while dragging a file (Shift).
 
 ![Settings](docs/screenshots/settings.png)
 
-Settings: accents, wheel modifiers, favourites, and output.
+Settings: accents, the Shift hotkey, favourites, and output.
 
 ## Build
 
@@ -29,7 +29,7 @@ open Pith.xcodeproj
 
 Sign with a personal team (Signing & Capabilities → your Apple ID team), then Run. Do not `codesign -s -`. Ad-hoc signatures change the cdhash every rebuild, and macOS then forgets the Accessibility grant.
 
-The first launch asks for Accessibility. Grant it under Privacy & Security → Accessibility, then drag a file in Finder and tap Shift. Command opens tools. Control opens actions. Escape dismisses the wheel and leaves the drag going. The wheel stays where it appeared until you drop, press Escape, or release the mouse.
+The first launch asks for Accessibility. Grant it under Privacy & Security → Accessibility, then drag a file in Finder and tap Shift. That opens the convert wheel. Each further Shift tap cycles to Tools, then Actions, then back to Convert, with a short spin between them. Command, Control, and Option do not open or switch wheels. Escape dismisses the wheel and leaves the drag going. The wheel stays where it appeared until you drop, press Escape, or release the mouse. A wheel opened from a Finder click (no drag) also dismisses when you click outside it.
 
 Login items (`SMAppService.mainApp`) are most reliable once Pith lives in `/Applications`.
 
@@ -69,7 +69,7 @@ flowchart TD
     center --> disk
 ```
 
-`DragGestureMachine` ignores a stale drag pasteboard: if `changeCount` has not moved since mouse-down, nothing is a file drag. A tap is a press and release of one modifier, under 300 ms, with no other key. The same modifier again does not dismiss the wheel. A different modifier switches wheels.
+`DragGestureMachine` ignores a stale drag pasteboard: if `changeCount` has not moved since mouse-down, nothing is a file drag. A tap is a press and release of one modifier, under 300 ms, with no other key. Only Shift counts. The first tap shows Convert. Another Shift tap cycles to the next wheel and does not dismiss. Command, Control, and Option are ignored, including any older per-wheel binding saved in Settings.
 
 The panel is a borderless non-activating `NSPanel` (floating, all spaces, transparent), 436 pt square so the 400 pt wheel sits in the middle. Hit testing uses y-down geometry, matching SwiftUI. The hole in the donut is empty on purpose: the system drag image shows through it. The blue filename pill and the green plus are Finder chrome.
 
@@ -81,7 +81,7 @@ The panel is a borderless non-activating `NSPanel` (floating, all spaces, transp
 | 2 | Glass wheel, hover, drop, dismiss on mouse-up, Escape, or drop. | Geometry and tap rules tested. SwiftUI panel not compiled here. |
 | 3 | Video and audio via ffmpeg, with AVFoundation for mp4↔mov and m4a. Progress HUD. Cancel from the menu bar. | ffmpeg argument builders and progress parsing tested. `Process` / `AVAssetExportSession` not compiled here. |
 | 4 | pandoc, LibreOffice headless, attributed-string fallback, CSV↔TSV, SRT↔VTT, zip/tar. PDFKit for PDF↔image and text. | Command lines, CSV, and subtitles tested. PDFKit and `soffice` not run here. |
-| 5 | Command wheel: Compress, Metadata, Edit, Annotate, Add BG, Crop, Redact, plus Trim / Merge / Split. Control wheel: AirDrop, Copy, Move, Copy Path, Terminal, Reveal. Settings. | Offer lists tested. Editors and settings UI not compiled here. |
+| 5 | Tools wheel: Compress, Metadata, Edit, Annotate, Add BG, Crop, Redact, plus Trim / Merge / Split. Actions wheel: AirDrop, Copy, Move, Copy Path, Terminal, Reveal. Settings. Shift cycles Convert → Tools → Actions. | Offer lists tested. Editors and settings UI not compiled here. |
 | 6 | Multi-file batches, arrow/number/Return navigation, Quick Look from notifications and Recent, file promises. | Batch naming and key navigation tested. Quick Look and promise fulfillment not compiled here. |
 
 Image and PDF conversion do not need Homebrew. Everything else degrades: the segment stays on the wheel, dimmed, and the centre pill shows the install line.
@@ -116,6 +116,7 @@ All sampled colour, type, and wheel geometry live in `App/UI/Theme.swift`.
 - Highlight `#EB4420` (235, 68, 32). Cream glass tint `(1.00, 0.86, 0.68)` over an `NSVisualEffectView` (`.popover` for the wheel, `.hudWindow` for the progress card).
 - Format labels are uppercase, bold, tracked. Tool labels sit under an SF Symbol.
 - Appear animation: scale 0.84 → 1 and fade, spring response 0.32, damping 0.74.
+- Shift cycle: the open ring turns clockwise and fades while the next ring settles in from the other direction (spring response 0.46, damping 0.78).
 - Format wheel for a PDF, clockwise from 12 o'clock: DOCX, JPG, PNG, TXT. The centre pill shows the hovered label, or the file size (`1.2 MB`) when nothing is hovered.
 - Image wheel, clockwise from 12: PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF, GIF.
 - Tool wheel, clockwise from 12: COMPRESS, METADATA, EDIT, ANNOTATE, ADD BG, CROP, REDACT.
@@ -155,7 +156,7 @@ App/QuickLook.swift
 
 ## Tests
 
-`swift test` runs the `PithCore` package only (Linux-friendly). Last run here: 47 tests, 0 failures — gesture state machine, wheel hit testing, keyboard navigation, output names, offer order, ffmpeg/pandoc/soffice argv, CSV↔TSV, crop aspect math.
+`swift test` runs the `PithCore` package only (Linux-friendly). Last run here: 67 tests, 0 failures — gesture state machine, wheel hit testing, keyboard navigation, output names, offer order, ffmpeg/pandoc/soffice argv, CSV↔TSV, crop aspect math.
 
 The `App/` target needs Xcode (AppKit, ImageIO, PDFKit, AVFoundation, SwiftUI). Sign with a personal team; avoid ad-hoc (`codesign -s -`) so Accessibility grants survive rebuilds.
 

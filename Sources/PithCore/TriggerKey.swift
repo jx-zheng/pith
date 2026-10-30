@@ -40,6 +40,16 @@ public enum WheelKind: String, Codable, Sendable, Equatable, CaseIterable {
     case convert
     case tools
     case actions
+
+    /// Next menu when Shift is tapped while a wheel is already open.
+    /// Order is convert → tools → actions → convert.
+    public var next: WheelKind {
+        switch self {
+        case .convert: return .tools
+        case .tools: return .actions
+        case .actions: return .convert
+        }
+    }
 }
 
 public struct KeyBindings: Equatable, Sendable, Codable {
@@ -62,6 +72,7 @@ public struct KeyBindings: Equatable, Sendable, Codable {
         tapMaxDuration: 0.30
     )
 
+    /// Older per-wheel mapping. Opening and cycling do not consult this; only Shift does.
     public func wheel(for key: TriggerKey) -> WheelKind? {
         if key == convert { return .convert }
         if key == tools { return .tools }

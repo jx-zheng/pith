@@ -6,8 +6,8 @@ import SwiftUI
 /// supplies the rest, so the wedge shifts with the wallpaper the way the
 /// original does.
 enum PithTheme {
-    /// In-place wheel switch (Shift/Command/Control while a wheel is open).
-    static let wheelSwitchAnimation: Animation = .spring(response: 0.34, dampingFraction: 0.82)
+    /// In-place cycle when Shift is tapped while a wheel is open.
+    static let wheelSwitchAnimation: Animation = .spring(response: 0.46, dampingFraction: 0.78)
     static let wheelDiameter: CGFloat = 400
     static let innerRatio: CGFloat = 0.40
     static let gapDegrees: Double = 6.5

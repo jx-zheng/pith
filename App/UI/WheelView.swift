@@ -137,20 +137,21 @@ struct WheelContainer: View {
                 .id(model.generation)
                 .transition(.asymmetric(
                     insertion: .modifier(
-                        active: WheelSwitchEffect(scale: 0.88, angle: -14, opacity: 0, blur: 3),
+                        active: WheelSwitchEffect(scale: 0.82, angle: -42, opacity: 0, blur: 6),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     ),
                     removal: .modifier(
-                        active: WheelSwitchEffect(scale: 1.1, angle: 10, opacity: 0, blur: 4),
+                        active: WheelSwitchEffect(scale: 0.86, angle: 48, opacity: 0, blur: 7),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     )
                 ))
         }
-            .scaleEffect(model.appeared ? 1 : 0.84)
-            .opacity(model.appeared ? 1 : 0)
-            .onAppear { play() }
-            .onChange(of: model.replay) { _, _ in play() }
-            .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
+        .animation(PithTheme.wheelSwitchAnimation, value: model.generation)
+        .scaleEffect(model.appeared ? 1 : 0.84)
+        .opacity(model.appeared ? 1 : 0)
+        .onAppear { play() }
+        .onChange(of: model.replay) { _, _ in play() }
+        .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
     }
 
     private func play() {
@@ -163,12 +164,23 @@ struct WheelContainer: View {
     }
 }
 
-/// Scale, spin, fade and soften a whole wheel while it swaps for another.
-struct WheelSwitchEffect: ViewModifier {
+/// Scale, spin, fade and soften a whole wheel while Shift cycles to the next one.
+/// The outgoing ring turns clockwise and the incoming ring settles from the other side.
+struct WheelSwitchEffect: ViewModifier, Animatable, Equatable {
     var scale: CGFloat
     var angle: Double
     var opacity: Double
     var blur: CGFloat
+
+    var animatableData: AnimatablePair<AnimatablePair<CGFloat, Double>, AnimatablePair<Double, CGFloat>> {
+        get { AnimatablePair(AnimatablePair(scale, angle), AnimatablePair(opacity, blur)) }
+        set {
+            scale = newValue.first.first
+            angle = newValue.first.second
+            opacity = newValue.second.first
+            blur = newValue.second.second
+        }
+    }
 
     func body(content: Content) -> some View {
         content

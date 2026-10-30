@@ -212,16 +212,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Select a file in Finder (click and release), then tap a trigger key.
-    /// Tapping another trigger key while the wheel is open switches wheels in place.
+    /// Select a file in Finder (click and release), then tap Shift.
+    /// Another Shift tap cycles Convert → Tools → Actions in place.
+    /// Escape and a click outside still dismiss; Shift does not.
     private func handleIdleTap(_ kind: WheelKind) {
         if clickMode, wheel.isShowing, let session {
-            if kind == self.kind {
-                if runFavouriteIfDoubleTap(kind) { return }
-                endClickMode()
-            } else {
-                showWheel(kind: kind, at: nil, session: session)
-            }
+            showWheel(kind: self.kind.next, at: nil, session: session)
             return
         }
         guard !drag.typedSinceClick,
@@ -331,7 +327,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             wheel.model.centerText = built.segments.isEmpty ? "NOTHING" : built.centerFallback
         }
         if wheel.isShowing {
-            // Switching wheels in place: cross-fade the old ring out and spin the new one in.
+            // Cycling wheels in place: the old ring spins out and the next one settles in.
             withAnimation(PithTheme.wheelSwitchAnimation) {
                 apply()
                 wheel.model.generation += 1
@@ -744,7 +740,7 @@ struct OnboardingView: View {
             Text("Pith watches the drag")
                 .font(.system(size: 20, weight: .semibold))
                 .foregroundStyle(PithTheme.ink)
-            Text("Drag a file from Finder, then tap Shift. A wheel appears under the pointer. Drop on a segment and the converted file lands next to the source. Command opens tools. Control opens actions.")
+            Text("Drag a file from Finder, then tap Shift. A wheel appears under the pointer. Tap Shift again to cycle through Tools and Actions, then back to Convert. Drop on a segment and the converted file lands next to the source. Escape dismisses the wheel.")
                 .font(.system(size: 13))
                 .foregroundStyle(PithTheme.ink.opacity(0.82))
                 .fixedSize(horizontal: false, vertical: true)

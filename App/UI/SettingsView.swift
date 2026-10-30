@@ -40,16 +40,17 @@ struct SettingsView: View {
                 }
             }
             Section("Wheels") {
-                keyPicker("Convert", key: $model.settings.bindings.convert)
-                keyPicker("Tools", key: $model.settings.bindings.tools)
-                keyPicker("Actions", key: $model.settings.bindings.actions)
-                caption("Tap the key while dragging a file, or click a file in Finder and then tap it. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't open.")
+                LabeledContent("Hotkey") {
+                    Text("Shift")
+                        .foregroundStyle(.secondary)
+                }
+                caption("Tap Shift while dragging a file, or click a file in Finder and then tap Shift. Each tap cycles Convert, then Tools, then Actions, then back to Convert. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't register. Escape dismisses the wheel.")
             }
-            Section("Double-tap favourites") {
+            Section("Favourites") {
                 favouritePicker("Convert", kind: .convert, selection: $favConvert)
                 favouritePicker("Tools", kind: .tools, selection: $favTools)
                 favouritePicker("Actions", kind: .actions, selection: $favActions)
-                caption("Double-tap a wheel's key to run its favourite straight away, with no aiming. It fires only when that segment is on the wheel and enabled for the file. Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
+                caption("A favourite is stored for each wheel. Shift cycles between wheels, so a second tap moves to the next wheel instead of running the favourite. Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
             }
             Section("Output") {
                 Picker("Location", selection: locationBinding) {
@@ -160,14 +161,6 @@ struct SettingsView: View {
             .font(.callout)
             .foregroundStyle(.secondary)
             .fixedSize(horizontal: false, vertical: true)
-    }
-
-    private func keyPicker(_ title: String, key: Binding<TriggerKey>) -> some View {
-        Picker(title, selection: key) {
-            ForEach(TriggerKey.allCases, id: \.self) { trigger in
-                Text(trigger.rawValue.capitalized).tag(trigger)
-            }
-        }
     }
 
     /// Label at the leading edge; fixed-width slider and value column at the trailing edge.

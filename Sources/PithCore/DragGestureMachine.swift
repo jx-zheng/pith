@@ -61,6 +61,7 @@ public enum GestureEffect: Equatable, Sendable {
     /// A trigger key was tapped while no drag is in progress (click-select mode).
     case idleTap(WheelKind)
     /// The open wheel's own trigger key was tapped again (double-tap favourite).
+    /// Shift no longer emits this: a Shift tap cycles to `WheelKind.next`.
     case repeatTap(WheelKind)
 }
 
@@ -168,21 +169,23 @@ public struct DragGestureMachine: Equatable {
         }
     }
 
+    /// Shift is the only key that opens or cycles a wheel. The first tap shows
+    /// Convert. Each further tap advances Convert → Tools → Actions → Convert.
+    /// Command, Control, Option, and any custom `KeyBindings` mapping do not open
+    /// or switch. `bindings` still supplies the tap-duration window.
     private mutating func handleTap(_ key: TriggerKey) -> [GestureEffect] {
-        guard let kind = bindings.wheel(for: key) else { return [] }
+        guard key == .shift else { return [] }
         switch phase {
         case let .dragging(session):
             let center = session.location
-            phase = .wheel(session, kind)
-            return [.showWheel(kind, center, session)]
+            phase = .wheel(session, .convert)
+            return [.showWheel(.convert, center, session)]
         case let .wheel(session, current):
-            if current == kind {
-                return [.repeatTap(kind)]
-            }
+            let kind = current.next
             phase = .wheel(session, kind)
             return [.switchWheel(kind, session)]
         case .idle:
-            return [.idleTap(kind)]
+            return [.idleTap(.convert)]
         case .pressed, .nonFileDrag:
             return []
         }

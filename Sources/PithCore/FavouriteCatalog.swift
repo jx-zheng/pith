@@ -10,7 +10,7 @@ public struct FavouriteGroup: Equatable, Sendable {
 }
 
 /// Every segment label a wheel can ever show, derived from the registries.
-/// Settings builds its double-tap favourite pickers from this.
+/// Settings builds its favourite pickers from this.
 public enum FavouriteCatalog {
     /// Tool availability with every external tool present, so no offer is hidden.
     static let everyTool = ToolAvailability(ffmpeg: "ffmpeg", ffprobe: "ffprobe", pandoc: "pandoc", soffice: "soffice")
