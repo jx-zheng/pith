@@ -60,9 +60,6 @@ public enum GestureEffect: Equatable, Sendable {
     case wheelKey(MonitorKey)
     /// A trigger key was tapped while no drag is in progress (click-select mode).
     case idleTap(WheelKind)
-    /// The open wheel's own trigger key was tapped again (double-tap favourite).
-    /// Shift no longer emits this: a Shift tap cycles to `WheelKind.next`.
-    case repeatTap(WheelKind)
 }
 
 public struct DragGestureMachine: Equatable {

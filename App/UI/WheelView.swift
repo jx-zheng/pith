@@ -140,13 +140,13 @@ struct WheelContainer: View {
                         active: WheelSwitchEffect(scale: 0.82, angle: -42, opacity: 0, blur: 6),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     ),
+                    // No blur on the way out, so a fast run of Shift taps cannot stack fogged rings.
                     removal: .modifier(
-                        active: WheelSwitchEffect(scale: 0.86, angle: 48, opacity: 0, blur: 7),
+                        active: WheelSwitchEffect(scale: 0.94, angle: 18, opacity: 0, blur: 0),
                         identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
                     )
                 ))
         }
-        .animation(PithTheme.wheelSwitchAnimation, value: model.generation)
         .scaleEffect(model.appeared ? 1 : 0.84)
         .opacity(model.appeared ? 1 : 0)
         .onAppear { play() }
@@ -166,21 +166,13 @@ struct WheelContainer: View {
 
 /// Scale, spin, fade and soften a whole wheel while Shift cycles to the next one.
 /// The outgoing ring turns clockwise and the incoming ring settles from the other side.
-struct WheelSwitchEffect: ViewModifier, Animatable, Equatable {
+/// `Equatable` is what `AnyTransition.modifier` requires. The effect is not `Animatable`,
+/// so blur is an in/out state rather than a per-frame filter.
+struct WheelSwitchEffect: ViewModifier, Equatable {
     var scale: CGFloat
     var angle: Double
     var opacity: Double
     var blur: CGFloat
-
-    var animatableData: AnimatablePair<AnimatablePair<CGFloat, Double>, AnimatablePair<Double, CGFloat>> {
-        get { AnimatablePair(AnimatablePair(scale, angle), AnimatablePair(opacity, blur)) }
-        set {
-            scale = newValue.first.first
-            angle = newValue.first.second
-            opacity = newValue.second.first
-            blur = newValue.second.second
-        }
-    }
 
     func body(content: Content) -> some View {
         content

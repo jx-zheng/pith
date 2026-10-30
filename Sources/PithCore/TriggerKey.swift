@@ -72,16 +72,36 @@ public struct KeyBindings: Equatable, Sendable, Codable {
         tapMaxDuration: 0.30
     )
 
-    /// Older per-wheel mapping. Opening and cycling do not consult this; only Shift does.
-    public func wheel(for key: TriggerKey) -> WheelKind? {
-        if key == convert { return .convert }
-        if key == tools { return .tools }
-        if key == actions { return .actions }
-        return nil
+    private enum CodingKeys: String, CodingKey {
+        case convert, tools, actions, tapMaxDuration
     }
 
-    public var hasDuplicateKeys: Bool {
-        Set([convert, tools, actions]).count < 3
+    /// Old settings still carry per-wheel keys. A missing or unknown value falls
+    /// back to the default so one bad field does not discard the whole file.
+    /// Opening ignores these keys; `tapMaxDuration` is the field that still applies.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        convert = Self.triggerKey(in: container, forKey: .convert, fallback: .shift)
+        tools = Self.triggerKey(in: container, forKey: .tools, fallback: .command)
+        actions = Self.triggerKey(in: container, forKey: .actions, fallback: .control)
+        tapMaxDuration = (try? container.decode(Double.self, forKey: .tapMaxDuration)) ?? Self.default.tapMaxDuration
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(convert, forKey: .convert)
+        try container.encode(tools, forKey: .tools)
+        try container.encode(actions, forKey: .actions)
+        try container.encode(tapMaxDuration, forKey: .tapMaxDuration)
+    }
+
+    private static func triggerKey(
+        in container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys,
+        fallback: TriggerKey
+    ) -> TriggerKey {
+        guard let raw = try? container.decode(String.self, forKey: key) else { return fallback }
+        return TriggerKey(rawValue: raw) ?? fallback
     }
 }
 

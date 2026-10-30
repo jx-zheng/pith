@@ -15,7 +15,7 @@ Convert wheel while dragging a file (Shift).
 
 ![Settings](docs/screenshots/settings.png)
 
-Settings: accents, the Shift hotkey, favourites, and output.
+Settings: accents, the Shift hotkey, and output. This screenshot still shows the old per-wheel modifiers and favourites; retake it on a Mac.
 
 ## Build
 
@@ -156,7 +156,7 @@ App/QuickLook.swift
 
 ## Tests
 
-`swift test` runs the `PithCore` package only (Linux-friendly). Last run here: 67 tests, 0 failures — gesture state machine, wheel hit testing, keyboard navigation, output names, offer order, ffmpeg/pandoc/soffice argv, CSV↔TSV, crop aspect math.
+`swift test` runs the `PithCore` package only (Linux-friendly). Last run here: 68 tests, 0 failures — gesture state machine, wheel hit testing, keyboard navigation, output names, offer order, ffmpeg/pandoc/soffice argv, CSV↔TSV, crop aspect math.
 
 The `App/` target needs Xcode (AppKit, ImageIO, PDFKit, AVFoundation, SwiftUI). Sign with a personal team; avoid ad-hoc (`codesign -s -`) so Accessibility grants survive rebuilds.
 

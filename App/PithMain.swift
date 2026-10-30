@@ -32,8 +32,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var settingsWindow: NSWindow?
     private var onboardingWindow: NSWindow?
     private static let dropGrace: TimeInterval = 0.4
-    private static let doubleTapWindow: TimeInterval = 0.45
-    private var wheelShownAt = Date.distantPast
     private var undoMonitors: [Any] = []
     private let undoTap = UndoKeyTap()
     private var undoTapRetry: Timer?
@@ -188,9 +186,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         drag.onWheelKey = { [weak self] key in
             self?.handleWheelKey(key)
         }
-        drag.onRepeatTap = { [weak self] kind in
-            DispatchQueue.main.async { _ = self?.runFavouriteIfDoubleTap(kind) }
-        }
         drag.onIdleTap = { [weak self] kind in
             DispatchQueue.main.async { self?.handleIdleTap(kind) }
         }
@@ -258,19 +253,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Second tap of the same key shortly after the wheel opened runs that wheel's favourite.
-    private func runFavouriteIfDoubleTap(_ kind: WheelKind) -> Bool {
-        guard wheel.isShowing, kind == self.kind,
-              Date().timeIntervalSince(wheelShownAt) < Self.doubleTapWindow,
-              let built, let index = Favourites.index(for: kind, in: built.segments) else { return false }
-        acceptDrop(index: index)
-        if clickMode {
-            clickMode = false
-            session = nil
-        }
-        return true
-    }
-
     private func undoLastConversion() {
         let entryDate = RecentLog.nextUndoable(center.recent)?.date
         if let message = center.undoLast() {
@@ -313,7 +295,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
-        if !wheel.isShowing || kind != self.kind { wheelShownAt = Date() }
         model.refreshTools()
         pushSettings()
         self.kind = kind

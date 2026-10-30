@@ -4,9 +4,6 @@ import SwiftUI
 import PithCore
 
 struct SettingsView: View {
-    @AppStorage(Favourites.key(.convert)) private var favConvert = ""
-    @AppStorage(Favourites.key(.tools)) private var favTools = ""
-    @AppStorage(Favourites.key(.actions)) private var favActions = ""
     @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
     @AppStorage(MenuBarPreference.key) private var showMenuBarIcon = true
     @ObservedObject var model: AppModel
@@ -46,12 +43,6 @@ struct SettingsView: View {
                 }
                 caption("Tap Shift while dragging a file, or click a file in Finder and then tap Shift. Each tap cycles Convert, then Tools, then Actions, then back to Convert. Hold longer than \(Int(model.settings.bindings.tapMaxDuration * 1000)) ms and it won't register. Escape dismisses the wheel.")
             }
-            Section("Favourites") {
-                favouritePicker("Convert", kind: .convert, selection: $favConvert)
-                favouritePicker("Tools", kind: .tools, selection: $favTools)
-                favouritePicker("Actions", kind: .actions, selection: $favActions)
-                caption("A favourite is stored for each wheel. Shift cycles between wheels, so a second tap moves to the next wheel instead of running the favourite. Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
-            }
             Section("Output") {
                 Picker("Location", selection: locationBinding) {
                     Text("Next to the source").tag(0)
@@ -74,6 +65,7 @@ struct SettingsView: View {
                 sliderRow("JPEG quality", value: $model.settings.jpegQuality, in: 0.4...1, display: "\(Int((model.settings.jpegQuality * 100).rounded()))%")
                 sliderRow("HEIC quality", value: $model.settings.heicQuality, in: 0.4...1, display: "\(Int((model.settings.heicQuality * 100).rounded()))%")
                 sliderRow("PDF render", value: $model.settings.pdfRenderDPI, in: 72...600, display: "\(Int(model.settings.pdfRenderDPI.rounded())) DPI")
+                caption("Undo the last conversion or replace with ⌃⌥⌘Z, or with plain ⌘Z in Finder within 5 seconds of it finishing.")
             }
             Section("Video") {
                 Picker("Codec", selection: $model.settings.videoCodec) {
@@ -114,7 +106,6 @@ struct SettingsView: View {
         .tint(PithTheme.highlight)
         .onAppear {
             refreshLoginCopy()
-            normaliseFavourites()
         }
         .onChange(of: model.settings) { _, _ in
             model.save()
@@ -175,51 +166,6 @@ struct SettingsView: View {
                 Text(display)
                     .monospacedDigit()
                     .frame(width: Self.valueWidth, alignment: .trailing)
-            }
-        }
-    }
-
-    /// Options come from `FavouriteCatalog`: every label that wheel can show, grouped.
-    /// The stored value stays the label string, so `Favourites.index` is unchanged.
-    private func favouritePicker(_ title: String, kind: WheelKind, selection: Binding<String>) -> some View {
-        let groups = FavouriteCatalog.groups(for: kind)
-        let known = Set(groups.flatMap(\.labels))
-        let current = selection.wrappedValue
-        return Picker(title, selection: selection) {
-            Text("None").tag("")
-            if !current.isEmpty && !known.contains(current) {
-                Text("\(current) (not on any wheel)").tag(current)
-            }
-            Divider()
-            if groups.count == 1, let only = groups.first {
-                ForEach(only.labels, id: \.self) { label in
-                    Text(label).tag(label)
-                }
-            } else {
-                ForEach(groups, id: \.title) { group in
-                    Section(group.title) {
-                        ForEach(group.labels, id: \.self) { label in
-                            Text(label).tag(label)
-                        }
-                    }
-                }
-            }
-        }
-        .pickerStyle(.menu)
-    }
-
-    /// Values typed into the old free-text fields ("jpg ", "copy path") snap to their picker label.
-    private func normaliseFavourites() {
-        let fields: [(WheelKind, Binding<String>)] = [(.convert, $favConvert), (.tools, $favTools), (.actions, $favActions)]
-        for (kind, binding) in fields {
-            let trimmed = binding.wrappedValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            if trimmed.isEmpty {
-                if !binding.wrappedValue.isEmpty { binding.wrappedValue = "" }
-                continue
-            }
-            if let label = FavouriteCatalog.labels(for: kind).first(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }),
-               label != binding.wrappedValue {
-                binding.wrappedValue = label
             }
         }
     }

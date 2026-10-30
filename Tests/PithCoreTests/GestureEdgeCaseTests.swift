@@ -103,6 +103,22 @@ final class GestureEdgeCaseTests: XCTestCase {
         XCTAssertEqual(WheelKind.actions.next, .convert)
     }
 
+    func testLegacyKeyBindingsDecodeLeniently() throws {
+        let partial = #"{"convert":"command","tools":"not-a-key","tapMaxDuration":0.22}"#
+        let bindings = try JSONDecoder().decode(KeyBindings.self, from: Data(partial.utf8))
+        XCTAssertEqual(bindings.convert, .command)
+        XCTAssertEqual(bindings.tools, .command, "unknown key falls back instead of failing the file")
+        XCTAssertEqual(bindings.actions, .control, "missing key falls back")
+        XCTAssertEqual(bindings.tapMaxDuration, 0.22)
+
+        let roundTrip = try JSONDecoder().decode(KeyBindings.self, from: JSONEncoder().encode(KeyBindings.default))
+        XCTAssertEqual(roundTrip, .default)
+
+        let settings = try JSONDecoder().decode(PithSettings.self, from: JSONEncoder().encode(PithSettings.default))
+        XCTAssertEqual(settings.bindings, .default)
+        XCTAssertEqual(settings.bindings.tapMaxDuration, 0.30)
+    }
+
     func testChordedModifiersAreNotATap() {
         var machine = dragging()
         _ = machine.handle(.flagsChanged(time: 1, flags: [.shift, .command]))
