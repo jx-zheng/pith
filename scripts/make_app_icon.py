@@ -5,10 +5,11 @@ The master is a 1024 canvas with an 824 squircle (100 px transparent margin).
 The mark is Citrus pith: a cream slice with six pointed wedges on a warm
 orange squircle, a soft top highlight, a drop shadow, and a hairline edge.
 
-The 16 px and 32 px slots use a simplified four-wedge drawing (bolder
-rind, no hairline, no highlight, pixel-aligned membranes) so the slice
-stays legible. From 64 px up, including 32@2x, the full six-wedge mark
-still reads, so those slots keep it.
+The 16 px and 32 px slots use a simplified drawing so the mark still
+reads as citrus. `--small-variant` selects it: `a` is three wedges with
+dark pixel-aligned membranes, `b` is three filled segments, `c` is a
+half-slice. From 64 px up, including 32@2x, the full six-wedge mark
+still reads, so those slots keep it. The default variant is `c`.
 
 Requires Pillow and numpy. Regenerates App/Assets.xcassets in place:
 
@@ -17,12 +18,13 @@ Requires Pillow and numpy. Regenerates App/Assets.xcassets in place:
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 ROOT = Path(__file__).resolve().parents[1]
 ICONSET = ROOT / "App" / "Assets.xcassets" / "AppIcon.appiconset"
@@ -70,20 +72,18 @@ HAIRLINE_ALPHA = 0.10
 
 # Simplified mark for the slots where six wedges blur together.
 # 64 px (32@2x) still shows the full slice, so it is not in this set.
-# Geometry is in output pixels, tuned per size: a 2 px membrane is the
-# centered stroke at both 16 and 32, and the 32 px ring is thinner
-# relative to the disk so the quadrants stay the larger shapes.
 SMALL_PIXELS = frozenset({16, 32})
-SMALL_GEOM = {
-    16: {"outer": 5.0, "inner": 4.0, "gap": 2.0, "aa": False},
-    32: {"outer": 10.5, "inner": 8.5, "gap": 2.0, "aa": True},
-}
-# Deeper tile than the full mark's highlighted top, and a lighter flesh,
-# so the quadrants still separate on a white desktop.
+SMALL_VARIANTS = ("a", "b", "c")
+# Half-slice: at 16 px the silhouette itself is a piece of citrus.
+DEFAULT_SMALL = "c"
+# Deeper tile than the full mark's highlighted top. No sheen, no shadow.
 SMALL_BG_TOP = np.array([255, 122, 46], dtype=np.float32)    # #FF7A2E
-SMALL_BG_BOTTOM = np.array([232, 74, 20], dtype=np.float32)  # #E84A14
+SMALL_BG_BOTTOM = np.array([208, 60, 14], dtype=np.float32)  # #D03C0E
 SMALL_CREAM = np.array([255, 252, 246], dtype=np.float32)    # #FFFCF6
-SMALL_FLESH = np.array([255, 150, 70], dtype=np.float32)     # #FF9646
+SMALL_PALE = np.array([255, 170, 78], dtype=np.float32)      # #FFAA4E
+SMALL_MID = np.array([255, 128, 42], dtype=np.float32)       # #FF802A
+SMALL_DEEP = np.array([168, 62, 16], dtype=np.float32)       # #A83E10
+SMALL_DARK = np.array([120, 42, 12], dtype=np.float32)       # #782A0C
 
 # macOS app-icon slots. 512@2x is the 1024 master. There is no separate
 # iOS marketing image and no Icon Composer bundle.
@@ -340,41 +340,150 @@ def full_icon(size: int, body: Image.Image) -> Image.Image:
     return Image.fromarray((np.clip(image, 0, 1) * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
 
-def small_icon(px: int) -> Image.Image:
-    """Four-wedge slice. Membranes are a centered integer-pixel stroke."""
-    geom = SMALL_GEOM[px]
-    supersample = 8 if geom["aa"] else 1
-    big = px * supersample
-    center = px / 2.0
-    y = (np.arange(big, dtype=np.float32)[:, None] + 0.5) / supersample
-    x = (np.arange(big, dtype=np.float32)[None, :] + 0.5) / supersample
-    dx = x - center
-    dy = y - center
-    dist = np.hypot(dx, dy)
+def _pixel_grid(px: int) -> tuple[np.ndarray, np.ndarray]:
+    """Pixel-center coordinates. Hard tests on these snap fills to whole pixels."""
+    y = np.arange(px, dtype=np.float32)[:, None] + 0.5
+    x = np.arange(px, dtype=np.float32)[None, :] + 0.5
+    return x, y
 
+
+def _small_canvas(px: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x, y = _pixel_grid(px)
     top = (CANVAS - BODY) / 2.0 / CANVAS * px
-    t = np.clip((y - top) / (px - 2.0 * top), 0.0, 1.0)
-    rgb = np.empty((big, big, 3), dtype=np.float32)
+    t = np.clip((y - top) / max(px - 2.0 * top, 1e-6), 0.0, 1.0)
+    rgb = np.empty((px, px, 3), dtype=np.float32)
     rgb[:] = _lerp(SMALL_BG_TOP, SMALL_BG_BOTTOM, t)
-    rgb[dist <= geom["outer"]] = SMALL_CREAM
-    membrane = (np.abs(dx) < geom["gap"] / 2.0) | (np.abs(dy) < geom["gap"] / 2.0)
-    rgb[(dist <= geom["inner"]) & ~membrane] = SMALL_FLESH
+    return rgb, x, y
 
-    if supersample == 1:
-        alpha = np.asarray(squircle_mask(px), dtype=np.float32) / 255.0
-        out = np.dstack([np.clip(rgb / 255.0, 0, 1), alpha])
-        return Image.fromarray((out * 255.0 + 0.5).astype(np.uint8), "RGBA")
 
-    mask = np.asarray(squircle_mask(big, supersample=1), dtype=np.float32) / 255.0
-    straight = np.dstack([np.clip(rgb / 255.0, 0, 1), mask])
-    prem = straight.copy()
-    prem[..., :3] *= prem[..., 3:4]
-    folded = prem.reshape(px, supersample, px, supersample, 4).mean(axis=(1, 3))
-    alpha = folded[..., 3:4]
-    out_rgb = np.zeros_like(folded[..., :3])
-    np.divide(folded[..., :3], np.maximum(alpha, 1e-6), out=out_rgb, where=alpha > 1e-4)
-    out = np.dstack([np.clip(out_rgb, 0, 1), np.clip(alpha[..., 0], 0, 1)])
+def _finish_small(rgb: np.ndarray) -> Image.Image:
+    alpha = np.asarray(squircle_mask(rgb.shape[0]), dtype=np.float32) / 255.0
+    out = np.dstack([np.clip(rgb / 255.0, 0.0, 1.0), alpha])
     return Image.fromarray((out * 255.0 + 0.5).astype(np.uint8), "RGBA")
+
+
+def _angle_up(dx: np.ndarray, dy: np.ndarray) -> np.ndarray:
+    """Degrees clockwise from 12 o'clock."""
+    return (np.degrees(np.arctan2(dx, -dy)) + 360.0) % 360.0
+
+
+def _in_cw(angle: np.ndarray, start: float, end: float) -> np.ndarray:
+    angle = np.mod(angle, 360.0)
+    start %= 360.0
+    end %= 360.0
+    if start <= end:
+        return (angle >= start) & (angle < end)
+    return (angle >= start) | (angle < end)
+
+
+def _membrane(dx, dy, dist, inner, angles, half) -> np.ndarray:
+    mask = np.zeros(dist.shape, dtype=bool)
+    for degrees in angles:
+        theta = math.radians(degrees)
+        ux, uy = math.sin(theta), -math.cos(theta)
+        perp = np.abs(dx * uy - dy * ux)
+        along = dx * ux + dy * uy
+        mask |= (perp <= half) & (along >= -0.2) & (dist <= inner + 0.15)
+    return mask
+
+
+def _mark_center(px: int, width: int) -> float:
+    """1 px strokes sit on a pixel. 2 px strokes sit on the boundary between pixels."""
+    return px / 2.0 - 0.5 if width == 1 else px / 2.0
+
+
+def small_cross(px: int) -> Image.Image:
+    """The rejected four-wedge cross, kept for the comparison sheet."""
+    rgb, x, y = _small_canvas(px)
+    scale = px / 16.0
+    center = px / 2.0
+    dist = np.hypot(x - center, y - center)
+    outer, inner, gap = 5.0 * scale, 4.0 * scale, 2.0 * scale
+    rgb[dist <= outer] = SMALL_CREAM
+    membrane = (np.abs(x - center) < gap / 2.0) | (np.abs(y - center) < gap / 2.0)
+    rgb[(dist <= inner) & ~membrane] = SMALL_MID
+    return _finish_small(rgb)
+
+
+def small_a(px: int) -> Image.Image:
+    """Three wedges in a Y, divided by dark pixel-aligned membranes.
+
+    Cream spokes at this size read as a peace sign. A 1 px (16) or 2 px (32)
+    dark line keeps the three wedges as the figure, inside the cream rind.
+    One wedge points up, so the division is not a plus.
+    """
+    rgb, x, y = _small_canvas(px)
+    scale = px / 16.0
+    width = 1 if px <= 16 else 2
+    center = _mark_center(px, width)
+    dx, dy = x - center, y - center
+    dist = np.hypot(dx, dy)
+    outer = 5.55 * scale
+    inner = outer - 1.45 * scale
+    rgb[dist <= outer] = SMALL_CREAM
+    angle = _angle_up(dx, dy)
+    for index, color in enumerate((SMALL_PALE, SMALL_MID, SMALL_DEEP)):
+        mid = index * 120.0
+        delta = (angle - mid + 180.0) % 360.0 - 180.0
+        rgb[(np.abs(delta) <= 58.0) & (dist <= inner)] = color
+    rgb[_membrane(dx, dy, dist, inner, (60.0, 180.0, 300.0), width / 2.0)] = SMALL_DARK
+    return _finish_small(rgb)
+
+
+def small_b(px: int) -> Image.Image:
+    """Three filled segments. Cream rind, hub, and gaps; the pulp is the figure.
+
+    Each segment is its own orange, so the mark reads as pieces of fruit
+    rather than as spokes.
+    """
+    rgb, x, y = _small_canvas(px)
+    scale = px / 16.0
+    center = px / 2.0
+    dx, dy = x - center, y - center
+    dist = np.hypot(dx, dy)
+    angle = _angle_up(dx, dy)
+    outer = 5.6 * scale
+    inner = outer - 1.4 * scale
+    hub = 1.15 * scale
+    rgb[dist <= outer] = SMALL_CREAM
+    half = (120.0 - 22.0) / 2.0
+    for index, color in enumerate((SMALL_PALE, SMALL_MID, SMALL_DEEP)):
+        mid = index * 120.0
+        delta = (angle - mid + 180.0) % 360.0 - 180.0
+        rgb[(np.abs(delta) <= half) & (dist <= inner) & (dist >= hub)] = color
+    return _finish_small(rgb)
+
+
+def small_c(px: int) -> Image.Image:
+    """Half-slice. Semicircle, cream rind and cut, three wedge segments."""
+    rgb, x, y = _small_canvas(px)
+    scale = px / 16.0
+    radius = 6.4 * scale
+    cx = px / 2.0
+    cy = px / 2.0 + radius * 0.42
+    dx, dy = x - cx, y - cy
+    dist = np.hypot(dx, dy)
+    body = (dist <= radius) & (dy <= 0.25)
+    rind = 1.35 * scale
+    angle = _angle_up(dx, dy)
+    pulp = body & (dist < radius - rind) & (dy < -0.5 * scale)
+    for start, end, color in ((270.0, 330.0, SMALL_DEEP), (330.0, 30.0, SMALL_MID), (30.0, 90.0, SMALL_PALE)):
+        rgb[pulp & _in_cw(angle, start, end)] = color
+    half = 0.45 if px <= 16 else 0.9
+    for degrees in (330.0, 30.0):
+        theta = math.radians(degrees)
+        ux, uy = math.sin(theta), -math.cos(theta)
+        perp = np.abs(dx * uy - dy * ux)
+        along = dx * ux + dy * uy
+        rgb[(perp <= half) & (along > 0.3 * scale) & (dy < -0.55 * scale) & (dist < radius - rind)] = SMALL_CREAM
+    rgb[body & (dist >= radius - rind)] = SMALL_CREAM
+    cut = 0.5 if px <= 16 else 0.65 * scale
+    rgb[(np.abs(dy) <= cut) & (np.abs(dx) <= radius - 0.35 * scale)] = SMALL_CREAM
+    return _finish_small(rgb)
+
+
+def small_icon(px: int, variant: str = DEFAULT_SMALL) -> Image.Image:
+    return {"a": small_a, "b": small_b, "c": small_c}[variant](px)
 
 
 def write_catalog(images: dict[int, Image.Image]) -> None:
@@ -408,7 +517,7 @@ def _border_max(alpha: np.ndarray, band: int) -> int:
     ))
 
 
-def check(images: dict[int, Image.Image]) -> None:
+def check(images: dict[int, Image.Image], variant: str) -> None:
     for pixels, image in images.items():
         arr = np.asarray(image)
         if arr.shape != (pixels, pixels, 4):
@@ -423,21 +532,17 @@ def check(images: dict[int, Image.Image]) -> None:
             border = _border_max(alpha, margin)
             if border != 0:
                 raise SystemExit(f"{pixels}px margin is not transparent (alpha {border})")
-            cream = (alpha > 200) & (rgb[..., 1] > 210) & (rgb[..., 2] > 190)
-            orange = (alpha > 200) & (rgb[..., 0] > 180) & (rgb[..., 1] < 190) & (rgb[..., 2] < 140)
-            if int(cream.sum()) < 4 or int(orange.sum()) < 4:
-                raise SystemExit(f"{pixels}px simplified mark is missing cream ({cream.sum()}) or orange ({orange.sum()})")
-            # Membranes are centered on an even canvas, so they land on whole pixels.
-            flesh = tuple(int(v) for v in SMALL_FLESH)
-            pith = tuple(int(v) for v in SMALL_CREAM)
-            if pixels == 16:
-                solid = {((6, 6), flesh), ((6, 7), pith), ((7, 8), pith)}
-            else:
-                solid = {((12, 12), flesh), ((12, 15), pith), ((12, 14), flesh)}
-            for (y, x), expect in solid:
-                got = tuple(int(v) for v in arr[y, x])
-                if got != (*expect, 255):
-                    raise SystemExit(f"{pixels}px ({x},{y}) is {got}, expected {expect} opaque")
+            cream = (alpha > 200) & (rgb[..., 1] > 220) & (rgb[..., 2] > 190)
+            # Pulp or tile orange. Deep pulp is darker than 180 red, so count that too.
+            orange = (alpha > 200) & (rgb[..., 0] > 140) & (rgb[..., 1] < 200) & (rgb[..., 2] < 120)
+            if int(cream.sum()) < 8 or int(orange.sum()) < 8:
+                raise SystemExit(f"{pixels}px {variant} mark is missing cream ({cream.sum()}) or orange ({orange.sum()})")
+            # A plus is a cream row and a cream column crossing at the center.
+            mid = pixels // 2
+            row = cream[mid]
+            col = cream[:, mid]
+            if int(row.sum()) > pixels * 0.45 and int(col.sum()) > pixels * 0.45:
+                raise SystemExit(f"{pixels}px {variant} mark still reads as a cream cross")
         else:
             # Shadow dies inside the margin. The outer ~48 px of the 1024 canvas stays clear.
             band = max(1, round(pixels * 48 / CANVAS))
@@ -469,17 +574,98 @@ def check(images: dict[int, Image.Image]) -> None:
         raise SystemExit("1024 drop shadow is missing under the squircle")
 
 
-def main() -> None:
-    body = render_body()
+def export_options(body: Image.Image, dest: Path) -> None:
+    """Write every small-size option, plus a light/dark comparison sheet."""
+    if not dest.is_absolute():
+        dest = ROOT / dest
+    dest.mkdir(parents=True, exist_ok=True)
+    drawings = {
+        "current": small_cross,
+        "a": small_a,
+        "b": small_b,
+        "c": small_c,
+    }
+    full = full_icon(512, body)
+    for name, draw in drawings.items():
+        if name == "current":
+            continue
+        icon16 = draw(16)
+        icon32 = draw(32)
+        icon16.save(dest / f"{name}-16.png", format="PNG", optimize=True)
+        icon32.save(dest / f"{name}-32.png", format="PNG", optimize=True)
+        # 16@2x and 32@1x are both the 32 px slot.
+        icon32.save(dest / f"{name}-16@2x.png", format="PNG", optimize=True)
+        icon32.save(dest / f"{name}-32@1x.png", format="PNG", optimize=True)
+
+    labels = (
+        ("current", "Current  4 wedges"),
+        ("a", "A  3 wedges"),
+        ("b", "B  filled segments"),
+        ("c", "C  half slice"),
+    )
+    bold = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+    caption = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+
+    def panel(background: tuple[int, int, int], ink: tuple[int, int, int]) -> Image.Image:
+        label_w, gap, margin = 280, 28, 28
+        row_h = 512 + 52
+        width = margin * 2 + label_w + 512 + gap + 16 + gap + 32 + gap + 128 + gap + 128
+        height = margin + len(labels) * row_h
+        image = Image.new("RGBA", (width, height), background + (255,))
+        draw = ImageDraw.Draw(image)
+        names = ("512", "16", "32", "16 ×8", "32 ×4")
+        for index, (key, title) in enumerate(labels):
+            y = margin + index * row_h
+            draw.text((margin, y + 8), title, fill=ink + (255,), font=bold)
+            x = margin + label_w
+            image.alpha_composite(full, (x, y))
+            draw.text((x, y + 518), names[0], fill=ink + (255,), font=caption)
+            x += 512 + gap
+            mark = drawings[key]
+            for name, (pixels, zoom) in zip(names[1:], ((16, 1), (32, 1), (16, 8), (32, 4))):
+                icon = mark(pixels)
+                shown = icon.resize((pixels * zoom, pixels * zoom), Image.Resampling.NEAREST) if zoom != 1 else icon
+                image.alpha_composite(shown, (x, y + 512 - shown.height))
+                draw.text((x, y + 518), name, fill=ink + (255,), font=caption)
+                x += shown.width + gap
+        return image
+
+    light = panel((242, 242, 246), (28, 28, 32))
+    dark = panel((28, 28, 32), (236, 236, 240))
+    sheet = Image.new("RGB", (light.width, light.height + dark.height + 56), (255, 255, 255))
+    banner = ImageDraw.Draw(sheet)
+    sheet.paste(light.convert("RGB"), (0, 28))
+    banner.text((28, 2), "Light", fill=(28, 28, 32), font=bold)
+    sheet.paste(dark.convert("RGB"), (0, light.height + 56))
+    banner.text((28, light.height + 30), "Dark", fill=(28, 28, 32), font=bold)
+    sheet.save(dest / "sheet.png", format="PNG", optimize=True)
+    print(f"wrote {dest}")
+
+
+def build_images(body: Image.Image, variant: str) -> dict[int, Image.Image]:
     images: dict[int, Image.Image] = {}
     for _, _, _, pixels in SLOTS:
         if pixels in images:
             continue
-        images[pixels] = small_icon(pixels) if pixels in SMALL_PIXELS else full_icon(pixels, body)
-    check(images)
+        images[pixels] = small_icon(pixels, variant) if pixels in SMALL_PIXELS else full_icon(pixels, body)
+    return images
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="Draw Pith's macOS AppIcon.")
+    parser.add_argument("--small-variant", choices=SMALL_VARIANTS, default=DEFAULT_SMALL,
+                        help="small-size drawing for the 16 px and 32 px slots (default: c)")
+    parser.add_argument("--export-options", type=Path, default=None,
+                        help="also write design/small-icon-options (every variant and the sheet)")
+    args = parser.parse_args(argv)
+    body = render_body()
+    if args.export_options is not None:
+        export_options(body, args.export_options)
+    images = build_images(body, args.small_variant)
+    check(images, args.small_variant)
     write_catalog(images)
     small = ", ".join(f"{p}px" for p in sorted(SMALL_PIXELS))
-    print(f"wrote {ICONSET.relative_to(ROOT)} ({len(SLOTS)} slots; simplified at {small})")
+    print(f"wrote {ICONSET.relative_to(ROOT)} ({len(SLOTS)} slots; {args.small_variant} at {small})")
 
 
 if __name__ == "__main__":
