@@ -102,8 +102,8 @@ enum FinderIconLocator {
         var current: AXUIElement? = hit
         for _ in 0..<10 {
             guard Date() < deadline, let node = current else { break }
-            let role = role(of: node) ?? ""
-            if role == windowRole || role == applicationRole { break }
+            let kind = role(of: node) ?? ""
+            if kind == windowRole || kind == applicationRole { break }
             if let item = namedItem(node),
                FinderIdentity.positivelyMatches(url: item.url, filename: item.filename, paths: paths),
                let bounds = iconBounds(of: node, deadline: deadline) {
@@ -151,20 +151,20 @@ enum FinderIconLocator {
 
     private static func collectSelected(in node: AXUIElement, into found: inout [AXUIElement], depth: Int, deadline: Date) {
         guard depth < 8, Date() < deadline else { return }
-        let role = role(of: node) ?? ""
-        if role == browserRole {
+        let kind = role(of: node) ?? ""
+        if kind == browserRole {
             found.append(contentsOf: lastColumnSelection(node, deadline: deadline))
             return
         }
-        if role == outlineRole {
+        if kind == outlineRole {
             found.append(contentsOf: elements(node, kAXSelectedRowsAttribute as String))
             return
         }
-        if role == listRole {
+        if kind == listRole {
             found.append(contentsOf: elements(node, kAXSelectedChildrenAttribute as String))
             return
         }
-        if role == groupRole || role == scrollRole {
+        if kind == groupRole || kind == scrollRole {
             let selected = elements(node, kAXSelectedChildrenAttribute as String)
             if !selected.isEmpty {
                 found.append(contentsOf: selected)
@@ -183,8 +183,8 @@ enum FinderIconLocator {
         var lists: [AXUIElement] = []
         for child in children(of: browser) {
             guard Date() < deadline else { break }
-            let role = role(of: child) ?? ""
-            if role == listRole || role == outlineRole {
+            let kind = role(of: child) ?? ""
+            if kind == listRole || kind == outlineRole {
                 lists.append(child)
                 continue
             }
