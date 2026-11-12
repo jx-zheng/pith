@@ -11,7 +11,8 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$HOME/.local/bin"
 APPS="$HOME/Applications"
 # Optional: export PITH_TEAM / PITH_IDENTITY for Manual signing.
-# Unset → Automatic (Xcode picks your signed-in Apple ID team).
+# PITH_IDENTITY unset: Automatic build, then re-sign with the first Apple
+# Development identity in the keychain (SHA-1 hash) when one exists.
 TEAM="${PITH_TEAM:-}"
 IDENTITY="${PITH_IDENTITY:-}"
 XCODEGEN="${XCODEGEN:-$(command -v xcodegen || echo "$HOME/.local/opt/xcodegen/bin/xcodegen")}"
@@ -86,6 +87,68 @@ install_xcodegen() {
   XCODEGEN="$HOME/.local/opt/xcodegen/bin/xcodegen"
 }
 
+# First valid "Apple Development..." identity from `security find-identity -v -p codesigning`.
+# Sets DEV_HASH to the SHA-1 (never the certificate name). Status 1 when none exists or security fails.
+apple_development_hash() {
+  local listing line count re
+  DEV_HASH=""
+  count=0
+  listing="$(security find-identity -v -p codesigning 2>/dev/null || true)"
+  re='^[[:space:]]*[0-9]+\)[[:space:]]+([0-9A-Fa-f]{40})[[:space:]]+"Apple[[:space:]]Development'
+  while IFS= read -r line; do
+    if [[ "$line" =~ $re ]]; then
+      count=$((count + 1))
+      if [ "$count" -eq 1 ]; then
+        DEV_HASH="${BASH_REMATCH[1]}"
+      fi
+    fi
+  done <<< "$listing"
+  [ -n "$DEV_HASH" ] || return 1
+  if [ "$count" -gt 1 ]; then
+    log "Apple Development identity found (${DEV_HASH:0:8}...). Set PITH_IDENTITY to override."
+  else
+    log "Apple Development identity found (${DEV_HASH:0:8}...)"
+  fi
+}
+
+# Re-sign an Automatic build so Accessibility survives rebuilds.
+# Sets APP_TO_INSTALL. Ad-hoc designated requirements pin cdhash; drop them so
+# the new requirement is based on the certificate. Failure keeps the original bundle.
+resign_for_accessibility() {
+  local src="$1" preserve dr staged
+  APP_TO_INSTALL="$src"
+  if ! apple_development_hash; then
+    log "No Apple Development identity found; Accessibility will need re-granting after rebuilds."
+    return 0
+  fi
+  staged="$TMP/resign/Pith.app"
+  rm -rf "$TMP/resign"
+  mkdir -p "$TMP/resign"
+  cp -R "$src" "$staged"
+  preserve="identifier,entitlements,requirements,flags"
+  dr="$(codesign -dr - "$staged" 2>&1 || true)"
+  if [[ "$dr" == *cdhash* ]]; then
+    preserve="identifier,entitlements,flags"
+  fi
+  if ! codesign --force --deep --sign "$DEV_HASH" --preserve-metadata="$preserve" "$staged"; then
+    log "Warning: re-sign failed; installing the ad-hoc build. Accessibility will need re-granting after rebuilds."
+    return 0
+  fi
+  if ! codesign --verify --strict "$staged"; then
+    log "Warning: re-sign failed; installing the ad-hoc build. Accessibility will need re-granting after rebuilds."
+    return 0
+  fi
+  dr="$(codesign -dr - "$staged" 2>&1 || true)"
+  if [[ "$dr" == *cdhash* ]]; then
+    log "Signed Pith.app with ${DEV_HASH:0:8}...; verify ok; designated requirement pins cdhash"
+  elif [[ "$dr" == *designated* ]]; then
+    log "Signed Pith.app with ${DEV_HASH:0:8}...; verify ok; designated requirement is certificate-based"
+  else
+    log "Signed Pith.app with ${DEV_HASH:0:8}...; verify ok"
+  fi
+  APP_TO_INSTALL="$staged"
+}
+
 build_and_install() {
   install_xcodegen
   cd "$REPO"
@@ -100,11 +163,17 @@ build_and_install() {
   xcodebuild -project Pith.xcodeproj -scheme Pith -configuration Debug -derivedDataPath build \
     "${SIGN_ARGS[@]}" build \
     > /tmp/pith_build.log 2>&1 || { grep -E "error:" /tmp/pith_build.log | sort -u; exit 1; }
+  local app="build/Build/Products/Debug/Pith.app"
+  # PITH_IDENTITY set: Manual signing above is unchanged (no keychain scan).
+  if [ -z "$IDENTITY" ]; then
+    resign_for_accessibility "$app"
+    app="$APP_TO_INSTALL"
+  fi
   log "Installing to $APPS/Pith.app"
   # Wait for the old copy to exit: a new launch hands off to (and quits for) a running one.
   pkill -x Pith 2>/dev/null || true
   for _ in $(seq 1 50); do pgrep -x Pith >/dev/null || break; sleep 0.2; done
-  rm -rf "$APPS/Pith.app"; cp -R build/Build/Products/Debug/Pith.app "$APPS/"
+  rm -rf "$APPS/Pith.app"; cp -R "$app" "$APPS/"
   open "$APPS/Pith.app"
 }
 
