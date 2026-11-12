@@ -178,22 +178,13 @@ final class WindowDragTests: XCTestCase {
         XCTAssertNotEqual(window.frame.origin, before, "\(name): title drag did not move the window")
     }
 
-    /// `sendEvent` hit-tests to the strip, whose `mouseDown` calls `performDrag`.
-    /// The drag and mouse-up are posted from a timer in the tracking run-loop mode,
-    /// which is the mode `performDrag` is waiting in.
+    /// `sendEvent` hit-tests to the strip. The drag and mouse-up are already queued,
+    /// which is what `performDrag` reads when the button is down, and what the
+    /// strip applies when a synthesized click has no physical button.
     private func sendHeaderDrag(window: NSWindow, from start: NSPoint, to end: NSPoint) {
-        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
-            NSApp.postEvent(self.mouse(.leftMouseDragged, at: end, window: window), atStart: false)
-            NSApp.postEvent(self.mouse(.leftMouseUp, at: end, window: window), atStart: false)
-        }
-        RunLoop.current.add(timer, forMode: .eventTracking)
-        RunLoop.current.add(timer, forMode: .common)
-        let endCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: end))
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
-            CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: endCG, mouseButton: .left)?.post(tap: .cgSessionEventTap)
-        }
+        NSApp.postEvent(mouse(.leftMouseDragged, at: end, window: window), atStart: false)
+        NSApp.postEvent(mouse(.leftMouseUp, at: end, window: window), atStart: false)
         window.sendEvent(mouse(.leftMouseDown, at: start, window: window))
-        timer.invalidate()
     }
 
     private func isDragStrip(_ view: NSView?) -> Bool {
@@ -213,11 +204,6 @@ final class WindowDragTests: XCTestCase {
             clickCount: 1,
             pressure: 1
         )!
-    }
-
-    private static func cgPoint(fromAppKit point: NSPoint) -> CGPoint {
-        let height = NSScreen.screens.first?.frame.height ?? 0
-        return CGPoint(x: point.x, y: height - point.y)
     }
 
     private func log(name: String, before: NSPoint, after: NSPoint) {

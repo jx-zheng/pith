@@ -26,7 +26,22 @@ final class TitleBarDragView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window, window.isMovable else { return }
+        let origin = window.frame.origin
         window.performDrag(with: event)
+        // A real press moves the window above. performDrag returns immediately
+        // when no mouse button is down, which is every synthesized click, so
+        // the drag events queued for that click are applied here.
+        guard window.frame.origin == origin else { return }
+        let start = window.convertPoint(toScreen: event.locationInWindow)
+        let deadline = Date().addingTimeInterval(0.3)
+        while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: deadline, inMode: .default, dequeue: true) {
+            let current = window.convertPoint(toScreen: next.locationInWindow)
+            window.setFrameOrigin(NSPoint(
+                x: origin.x + current.x - start.x,
+                y: origin.y + current.y - start.y
+            ))
+            if next.type == .leftMouseUp { break }
+        }
     }
 }
 
