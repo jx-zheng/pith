@@ -9,6 +9,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     private let panel: NSPanel
     private let dropView: WheelDropView
     private(set) var isShowing = false
+    /// Set once the drag image's icon component has positioned the ring.
+    private var alignedToIcon = false
     var onDropIndex: ((Int) -> Void)?
     var onHoverIndex: ((Int?) -> Void)?
     /// Click-select mode: a segment was clicked.
@@ -32,6 +34,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         panel.hasShadow = false
         panel.hidesOnDeactivate = false
         panel.ignoresMouseEvents = false
+        // The wheel stays on the file icon. It is not a window with a title bar;
+        // dragging it would steal segment clicks and the drop.
         panel.isMovable = false
         panel.becomesKeyOnlyIfNeeded = true
         panel.isReleasedWhenClosed = false
@@ -54,9 +58,13 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
 
+    /// The panel is not a title-bar window. Audits read this instead of reaching into the panel.
+    var isMovableForAudit: Bool { panel.isMovable }
+    var styleMaskForAudit: NSWindow.StyleMask { panel.styleMask }
+
     func present(at screenPoint: CGPoint) {
-        let size = panel.frame.size
-        panel.setFrameOrigin(NSPoint(x: screenPoint.x - size.width / 2, y: screenPoint.y - size.height / 2))
+        alignedToIcon = false
+        moveRing(to: screenPoint)
         if !isShowing {
             model.appeared = false
             model.replay += 1
@@ -90,10 +98,32 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
 
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         NSLog("Pith: draggingEntered wheel")
+        alignRingToDraggedIcon(sender)
         return draggingUpdated(sender)
     }
 
+    /// Centers the wheel on the drag image's icon bitmap, once per presentation.
+    /// The pointer is often on the filename label, which is part of the cell and
+    /// not the icon. Later drag events leave the wheel where it appeared.
+    private func alignRingToDraggedIcon(_ sender: NSDraggingInfo) {
+        guard !alignedToIcon else { return }
+        guard let center = DraggedIconRing.center(of: sender, mouse: NSEvent.mouseLocation) else { return }
+        alignedToIcon = true
+        moveRing(to: center)
+    }
+
+    private func moveRing(to screenPoint: CGPoint) {
+        let size = panel.frame.size
+        let origin = IconRingGeometry.panelOrigin(
+            center: Point(x: Double(screenPoint.x), y: Double(screenPoint.y)),
+            panelWidth: Double(size.width),
+            panelHeight: Double(size.height)
+        )
+        panel.setFrameOrigin(NSPoint(x: origin.x, y: origin.y))
+    }
+
     func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        alignRingToDraggedIcon(sender)
         let index = highlight(at: sender.draggingLocation)
         if model.highlighted != index {
             model.highlighted = index

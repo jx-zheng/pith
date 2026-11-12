@@ -220,7 +220,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paths = FinderSelection.paths()
         guard !paths.isEmpty else { return }
         let mouse = NSEvent.mouseLocation
-        let point = Point(x: mouse.x, y: mouse.y)
+        let center = FinderIconLocator.iconCenter(near: mouse, paths: paths) ?? mouse
+        let point = Point(x: center.x, y: center.y)
         let session = DragSession(
             changeCount: -1,
             filePaths: paths,
@@ -429,12 +430,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
-        // The window takes the SwiftUI form's own size, so there's no dead margin around it.
         let host = NSHostingController(rootView: SettingsView(model: model))
-        let window = NSWindow(contentViewController: host)
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.title = "Pith Settings"
-        window.isReleasedWhenClosed = false
+        let window = PithWindowFactory.makeSettings(contentController: host)
         window.setContentSize(host.view.fittingSize)
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -448,24 +445,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             box.window = nil
             self?.onboardingWindow = nil
         }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 280),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Pith"
-        window.titlebarAppearsTransparent = true
-        window.isReleasedWhenClosed = false
-        window.backgroundColor = NSColor(calibratedRed: 1, green: 0.78, blue: 0.62, alpha: 1)
-        window.contentView = NSHostingView(rootView: OnboardingView(
+        let window = PithWindowFactory.makeOnboarding(content: NSHostingView(rootView: OnboardingView(
             onGrant: {
                 _ = AccessibilityPermission.isTrusted(prompt: true)
                 close()
             },
             onLater: close
-        ))
-        window.center()
+        )))
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         box.window = window
@@ -693,52 +679,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private final class WindowBox {
     var window: NSWindow?
-}
-
-private struct MissingImageNote: View {
-    var name: String
-    var onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Couldn't open \(name)")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(PithTheme.ink)
-            Button("Close", action: onClose)
-                .buttonStyle(PithPrimaryButtonStyle())
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PithTheme.windowWash.opacity(0.35))
-    }
-}
-
-struct OnboardingView: View {
-    var onGrant: () -> Void
-    var onLater: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Pith watches the drag")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(PithTheme.ink)
-            Text("Drag a file from Finder, then tap Shift. A wheel appears under the pointer. Tap Shift again to cycle through Tools and Actions, then back to Convert. Drop on a segment and the converted file lands next to the source. Escape dismisses the wheel.")
-                .font(.system(size: 13))
-                .foregroundStyle(PithTheme.ink.opacity(0.82))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("macOS has to list Pith under Privacy & Security → Accessibility. Finder owns the drag; Pith only sees the tap and the drag pasteboard once that permission is on.")
-                .font(.system(size: 13))
-                .foregroundStyle(PithTheme.ink.opacity(0.7))
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Later", action: onLater)
-                    .buttonStyle(PithQuietButtonStyle())
-                Spacer()
-                Button("Grant Access", action: onGrant)
-                    .buttonStyle(PithPrimaryButtonStyle())
-            }
-            .padding(.top, 6)
-        }
-        .padding(24)
-        .frame(width: 460)
-    }
 }

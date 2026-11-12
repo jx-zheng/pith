@@ -14,25 +14,33 @@ struct EditorChrome<Content: View>: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                Text(title)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(PithTheme.ink)
-                HStack {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(PithTheme.ink.opacity(0.75))
-                            .frame(width: 28, height: 28)
-                            .background(Circle().fill(Color.white.opacity(0.35)))
+            // Header background is the drag region, including the padding under the
+            // transparent title bar. The close button stays in front and still clicks.
+            VStack(spacing: 0) {
+                ZStack {
+                    Text(title)
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(PithTheme.ink)
+                        .allowsHitTesting(false)
+                    HStack {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 12, weight: .bold))
+                                .foregroundStyle(PithTheme.ink.opacity(0.75))
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(Color.white.opacity(0.35)))
+                        }
+                        .buttonStyle(.plain)
+                        Spacer()
+                            .allowsHitTesting(false)
                     }
-                    .buttonStyle(.plain)
-                    Spacer()
                 }
             }
             .padding(.horizontal, 18)
             .padding(.top, 16)
             .padding(.bottom, 10)
+            .frame(maxWidth: .infinity)
+            .background(WindowDragRegion())
 
             content()
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -156,14 +164,7 @@ enum EditorWindow {
             backing: .buffered,
             defer: false
         )
-        window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        // Editors use click-drag on their canvas (redact, crop, annotate), so only the
-        // title-bar strip moves the window.
-        window.isMovableByWindowBackground = false
-        window.level = .floating
+        PithWindowFactory.configureEditor(window)
         window.center()
         let host = NSHostingView(rootView: content())
         host.frame = NSRect(origin: .zero, size: size)
@@ -177,5 +178,55 @@ enum EditorWindow {
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         return window
+    }
+}
+
+struct MissingImageNote: View {
+    var name: String
+    var onClose: () -> Void
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Text("Couldn't open \(name)")
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(PithTheme.ink)
+            Button("Close", action: onClose)
+                .buttonStyle(PithPrimaryButtonStyle())
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(PithTheme.windowWash.opacity(0.35))
+        .pithTitleBarDrag()
+    }
+}
+
+struct OnboardingView: View {
+    var onGrant: () -> Void
+    var onLater: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Pith watches the drag")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(PithTheme.ink)
+            Text("Drag a file from Finder, then tap Shift. A wheel appears under the pointer. Tap Shift again to cycle through Tools and Actions, then back to Convert. Drop on a segment and the converted file lands next to the source. Escape dismisses the wheel.")
+                .font(.system(size: 13))
+                .foregroundStyle(PithTheme.ink.opacity(0.82))
+                .fixedSize(horizontal: false, vertical: true)
+            Text("macOS has to list Pith under Privacy & Security → Accessibility. Finder owns the drag; Pith only sees the tap and the drag pasteboard once that permission is on.")
+                .font(.system(size: 13))
+                .foregroundStyle(PithTheme.ink.opacity(0.7))
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Button("Later", action: onLater)
+                    .buttonStyle(PithQuietButtonStyle())
+                Spacer()
+                Button("Grant Access", action: onGrant)
+                    .buttonStyle(PithPrimaryButtonStyle())
+            }
+            .padding(.top, 6)
+        }
+        .padding(24)
+        .frame(width: 460)
+        .pithTitleBarDrag()
     }
 }

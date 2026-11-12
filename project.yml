@@ -58,14 +58,48 @@ targets:
         TEST_HOST: ""
         BUNDLE_LOADER: ""
         ENABLE_TESTABILITY: YES
+  PithWindowTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/PithWindowTests
+      - path: App/UI/WindowDragging.swift
+      - path: App/UI/EditorChrome.swift
+      - path: App/UI/Theme.swift
+      - path: App/UI/ProgressHUD.swift
+      - path: App/UI/WheelView.swift
+      - path: App/UI/WheelPanel.swift
+      - path: App/UI/AnnularSegmentShape.swift
+      - path: App/Drag/DraggedIconRing.swift
+    dependencies:
+      - package: PithCore
+        product: PithCore
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.kevinzheng.pith.window-tests
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
+        ENABLE_TESTABILITY: YES
+        CODE_SIGNING_ALLOWED: NO
 schemes:
   Pith:
     build:
       targets:
         Pith: all
         PithCoreTests: [test]
+        PithWindowTests: [test]
     run:
       config: Debug
     test:
       targets:
         - PithCoreTests
+        - PithWindowTests
+  PithWindowTests:
+    build:
+      targets:
+        PithWindowTests: [test]
+    test:
+      targets:
+        - PithWindowTests

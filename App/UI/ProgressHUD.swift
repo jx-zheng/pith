@@ -22,10 +22,12 @@ struct ProgressHUDView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(PithTheme.ink)
                     .lineLimit(1)
+                    .allowsHitTesting(false)
                 Text(subtitle)
                     .font(.system(size: 11, weight: .regular))
                     .foregroundStyle(PithTheme.ink.opacity(0.62))
                     .lineLimit(1)
+                    .allowsHitTesting(false)
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
                         Capsule().fill(Color.black.opacity(0.16))
@@ -36,7 +38,10 @@ struct ProgressHUDView: View {
                 }
                 .frame(height: 3)
                 .padding(.top, 2)
+                .allowsHitTesting(false)
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(WindowDragRegion())
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 12)
@@ -65,10 +70,14 @@ struct HUDJob: Identifiable, Equatable {
     var anchor: CGPoint
 }
 
-final class HUDPanelController {
+final class HUDPanelController: NSObject, NSWindowDelegate {
     private var panels: [UUID: NSPanel] = [:]
     /// Insertion order. Dictionary key order is not stable, and cards were jumping as jobs updated.
     private var order: [UUID] = []
+    /// Origin last applied by `place`. A move that doesn't match it is the user dragging the card.
+    private var programmedOrigin: [UUID: NSPoint] = [:]
+    /// Once the user drags a card, progress ticks must not snap it back to the anchor.
+    private var userOrigin: [UUID: NSPoint] = [:]
 
     func upsert(_ job: HUDJob) {
         let isNew = panels[job.id] == nil
@@ -103,21 +112,43 @@ final class HUDPanelController {
         panels[id]?.orderOut(nil)
         panels[id] = nil
         order.removeAll { $0 == id }
+        programmedOrigin[id] = nil
+        userOrigin[id] = nil
     }
 
     func removeAll() {
         panels.values.forEach { $0.orderOut(nil) }
         panels.removeAll()
         order.removeAll()
+        programmedOrigin.removeAll()
+        userOrigin.removeAll()
+    }
+
+    func panel(id: UUID) -> NSPanel? { panels[id] }
+
+    func windowDidMove(_ notification: Notification) {
+        guard let panel = notification.object as? NSPanel,
+              let id = panels.first(where: { $0.value === panel })?.key else { return }
+        let origin = panel.frame.origin
+        if let programmed = programmedOrigin[id], near(origin, programmed) { return }
+        userOrigin[id] = origin
     }
 
     var onCancel: ((UUID) -> Void)?
 
     private func place(_ job: HUDJob, on panel: NSPanel) {
-        let frame = frame(for: job)
+        var frame = frame(for: job)
+        if let origin = userOrigin[job.id] {
+            frame.origin = origin
+        }
+        programmedOrigin[job.id] = frame.origin
         if panel.frame != frame {
             panel.setFrame(frame, display: true)
         }
+    }
+
+    private func near(_ a: NSPoint, _ b: NSPoint) -> Bool {
+        abs(a.x - b.x) < 0.5 && abs(a.y - b.y) < 0.5
     }
 
     private func frame(for job: HUDJob) -> NSRect {
@@ -132,22 +163,8 @@ final class HUDPanelController {
     }
 
     private func makePanel() -> NSPanel {
-        let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 286, height: 78),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
-        panel.isFloatingPanel = true
-        panel.level = .statusBar
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = false
-        panel.isMovable = false
-        panel.isReleasedWhenClosed = false
+        let panel = PithWindowFactory.makeHUDPanel()
+        panel.delegate = self
         return panel
     }
 }

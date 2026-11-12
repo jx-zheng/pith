@@ -1,0 +1,174 @@
+import AppKit
+import SwiftUI
+
+/// Title-bar drag shared by every secondary window.
+///
+/// Glass editors use a hidden, transparent title bar (`fullSizeContentView`) and
+/// the SwiftUI content covers it, so AppKit never sees a title-bar drag. The
+/// progress card is borderless. This view is the title region: `mouseDown`
+/// tracks the pointer and moves the window by that delta. Canvas clicks stay
+/// on the views above it, because `isMovableByWindowBackground` stays off.
+final class TitleBarDragView: NSView {
+    static let identifier = "pith.titleDrag"
+
+    override var isOpaque: Bool { false }
+    override var mouseDownCanMoveWindow: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        bounds.contains(point) ? self : nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        TitleBarDrag.track(window: window, from: event)
+    }
+}
+
+enum TitleBarDrag {
+    /// How long `track` waits for the next mouse event. Tests lower this so a
+    /// missed mouse-up cannot hang the runner. A real drag keeps the default.
+    static var timeout: TimeInterval = 86_400
+
+    /// Moves `window` with the pointer until mouse-up.
+    /// The origin change is `currentScreen - startScreen`, computed in screen
+    /// space so a label-sized title strip and a system title bar move the same way.
+    static func track(window: NSWindow?, from event: NSEvent) {
+        guard let window, window.isMovable else { return }
+        let startOrigin = window.frame.origin
+        let startScreen = window.convertPoint(toScreen: event.locationInWindow)
+        window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: timeout, mode: .eventTracking) { next, stop in
+            guard let next else {
+                stop.pointee = true
+                return
+            }
+            let current = window.convertPoint(toScreen: next.locationInWindow)
+            window.setFrameOrigin(NSPoint(
+                x: startOrigin.x + current.x - startScreen.x,
+                y: startOrigin.y + current.y - startScreen.y
+            ))
+            if next.type == .leftMouseUp {
+                stop.pointee = true
+            }
+        }
+    }
+}
+
+/// Invisible title strip. Put it behind a window's own buttons so those still click.
+struct WindowDragRegion: NSViewRepresentable {
+    func makeNSView(context: Context) -> TitleBarDragView {
+        let view = TitleBarDragView()
+        view.setAccessibilityIdentifier(TitleBarDragView.identifier)
+        return view
+    }
+
+    func updateNSView(_ nsView: TitleBarDragView, context: Context) {}
+
+    /// Take the size proposed by the header or title strip. Asking for more
+    /// would stretch the strip over the editor canvas.
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: TitleBarDragView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height, width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+}
+
+extension View {
+    /// Covers the transparent system title bar (about 32 pt) without taking the
+    /// controls drawn under it.
+    func pithTitleBarDrag() -> some View {
+        overlay(alignment: .top) {
+            WindowDragRegion()
+                .frame(height: 32)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+enum PithWindowFactory {
+    static func configureEditor(_ window: NSWindow) {
+        window.titleVisibility = .hidden
+        window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.isMovable = true
+        // Canvas tools (crop, redact, annotate) drag inside the view. Only the
+        // title strip moves the window.
+        window.isMovableByWindowBackground = false
+        window.level = .floating
+    }
+
+    static func makeOnboarding(content: NSView) -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 460, height: 280),
+            styleMask: [.titled, .closable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Pith"
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = true
+        window.isReleasedWhenClosed = false
+        window.isMovable = true
+        window.isMovableByWindowBackground = false
+        window.backgroundColor = NSColor(calibratedRed: 1, green: 0.78, blue: 0.62, alpha: 1)
+        window.contentView = content
+        window.center()
+        return window
+    }
+
+    static func makeSettings(contentController: NSViewController) -> NSWindow {
+        let window = NSWindow(contentViewController: contentController)
+        window.styleMask = [.titled, .closable, .miniaturizable]
+        window.title = "Pith Settings"
+        window.titleVisibility = .visible
+        window.titlebarAppearsTransparent = false
+        window.isMovable = true
+        window.isMovableByWindowBackground = false
+        window.isReleasedWhenClosed = false
+        return window
+    }
+
+    static func makeHUDPanel() -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 286, height: 78),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .statusBar
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = false
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+        panel.isReleasedWhenClosed = false
+        return panel
+    }
+
+    /// Invisible anchor for the system Quick Look panel. The panel the user sees
+    /// is `QLPreviewPanel`, which has its own title bar. This host is not a window
+    /// anyone drags.
+    static func makeQuickLookHost() -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 8, height: 8),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isOpaque = false
+        window.backgroundColor = .clear
+        window.level = .floating
+        window.collectionBehavior = [.canJoinAllSpaces, .transient]
+        window.isReleasedWhenClosed = false
+        window.isMovable = false
+        return window
+    }
+}
