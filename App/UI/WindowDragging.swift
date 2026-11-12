@@ -31,18 +31,18 @@ final class TitleBarDragView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window, window.isMovable else { return }
-        window.performDrag(with: event)
-        // A real press is entirely `performDrag`. The branch below exists only
-        // for a synthesized click: no left button is down, and the test posted
-        // the drag events before `mouseDown`. A plain header click must not
-        // wait on the event queue.
-        guard Self.followsQueuedEventsForTesting, NSEvent.pressedMouseButtons & 1 == 0 else { return }
         let origin = window.frame.origin
         let start = event.locationInWindow
+        // Sampled before performDrag. A real press has the left button down, so
+        // it only calls performDrag. performDrag ends on mouse-up, when the
+        // button is already up; checking afterwards would miss that.
+        let followQueue = Self.followsQueuedEventsForTesting && NSEvent.pressedMouseButtons & 1 == 0
+        window.performDrag(with: event)
+        guard followQueue else { return }
         let deadline = Date().addingTimeInterval(0.3)
         while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: deadline, inMode: .default, dequeue: true) {
-            // Window coordinates of the posted events. Do not convert through
-            // the window after it has moved; that counts the move twice.
+            // Original frame plus the posted event's window location. Do not
+            // convert through the window after it has moved; that counts the move twice.
             window.setFrameOrigin(NSPoint(
                 x: origin.x + (next.locationInWindow.x - start.x),
                 y: origin.y + (next.locationInWindow.y - start.y)
