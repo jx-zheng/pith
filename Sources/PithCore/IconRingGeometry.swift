@@ -79,29 +79,12 @@ public enum IconRingGeometry {
         return icon
     }
 
-    /// The Finder icon center when it is within `radius` of the pointer.
-    /// A center farther away is a different row, so the caller keeps the pointer.
-    public static func accessibilityCenter(_ center: Point?, pointer: Point, radius: Double) -> Point? {
-        guard let center, radius >= 0 else { return nil }
-        let dx = center.x - pointer.x
-        let dy = center.y - pointer.y
-        guard dx * dx + dy * dy <= radius * radius else { return nil }
-        return center
-    }
-
-    /// Which measurement produced the ring center. Drag-image bounds win, then the
-    /// Finder icon under the drag origin, then the pointer.
-    public static func choose(dragImageCenter: Point?, accessibilityCenter: Point?, pointer: Point) -> (center: Point, source: RingAnchorSource) {
+    /// Drag-image bounds win. Otherwise the icon is `pointer + offset`, where
+    /// `offset` was measured once at the grab. The pointer is last.
+    public static func choose(dragImageCenter: Point?, offsetCenter: Point?, pointer: Point) -> (center: Point, source: RingAnchorSource) {
         if let dragImageCenter { return (dragImageCenter, .dragImage) }
-        if let accessibilityCenter { return (accessibilityCenter, .accessibility) }
+        if let offsetCenter { return (offsetCenter, .dragOffset) }
         return (pointer, .pointer)
-    }
-
-    public static func logLine(source: RingAnchorSource, center: Point, pointer: Point) -> String {
-        String(
-            format: "Pith: drag ring source=%@ center=(%.1f,%.1f) pointer=(%.1f,%.1f)",
-            source.rawValue, center.x, center.y, pointer.x, pointer.y
-        )
     }
 
     /// Panel origin that puts the panel's center on `center`. The wheel is centered
@@ -145,8 +128,10 @@ public enum IconRingGeometry {
 }
 
 public enum RingAnchorSource: String, Equatable, Sendable {
+    case selectedElement = "selected-element"
+    case hitTest = "hit-test"
     case dragImage = "drag-image"
-    case accessibility = "accessibility"
+    case dragOffset = "drag-offset"
     case pointer = "pointer"
 }
 

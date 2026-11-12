@@ -209,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Select a file in Finder (click and release), then tap Shift.
     /// Another Shift tap cycles Convert → Tools → Actions in place.
-    /// Escape and a click outside still dismiss; Shift does not.
+    /// Escape dismisses. So does any click that is not a wedge with an action. Shift does not.
     private func handleIdleTap(_ kind: WheelKind) {
         if clickMode, wheel.isShowing, let session {
             showWheel(kind: self.kind.next, at: nil, session: session)
@@ -220,7 +220,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paths = FinderSelection.paths()
         guard !paths.isEmpty else { return }
         let mouse = NSEvent.mouseLocation
-        let center = FinderIconLocator.iconCenter(near: mouse, paths: paths) ?? mouse
+        let located = FinderIconLocator.locate(near: mouse, paths: paths)
+        let center = located.center ?? mouse
+        FinderIconLocator.log(located, mode: "click", mouse: mouse, paths: paths, center: center)
         let point = Point(x: center.x, y: center.y)
         let session = DragSession(
             changeCount: -1,
@@ -251,6 +253,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.acceptDrop(index: index)
             self.clickMode = false
             self.session = nil
+        }
+        wheel.onMissClick = { [weak self] in
+            guard let self, self.clickMode else { return }
+            self.endClickMode()
         }
     }
 

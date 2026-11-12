@@ -89,18 +89,30 @@ final class IconRingGeometryTests: XCTestCase {
     func testRingLogNamesEveryAnchorSource() {
         let pointer = Point(x: 200, y: 300)
         let icon = Point(x: 200, y: 340)
-        let ax = Point(x: 188, y: 320)
-        let fromImage = IconRingGeometry.choose(dragImageCenter: icon, accessibilityCenter: ax, pointer: pointer)
-        let fromAX = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: ax, pointer: pointer)
-        let fromPointer = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: nil, pointer: pointer)
+        let shifted = Point(x: 188, y: 320)
+        let fromImage = IconRingGeometry.choose(dragImageCenter: icon, offsetCenter: shifted, pointer: pointer)
+        let fromOffset = IconRingGeometry.choose(dragImageCenter: nil, offsetCenter: shifted, pointer: pointer)
+        let fromPointer = IconRingGeometry.choose(dragImageCenter: nil, offsetCenter: nil, pointer: pointer)
         XCTAssertEqual(fromImage.source, .dragImage)
         XCTAssertEqual(fromImage.center, icon)
-        XCTAssertEqual(fromAX.source, .accessibility)
-        XCTAssertEqual(fromAX.center, ax)
+        XCTAssertEqual(fromOffset.source, .dragOffset)
+        XCTAssertEqual(fromOffset.center, shifted)
         XCTAssertEqual(fromPointer.source, .pointer)
         XCTAssertEqual(fromPointer.center, pointer)
-        for choice in [fromImage, fromAX, fromPointer] {
-            print(IconRingGeometry.logLine(source: choice.source, center: choice.center, pointer: pointer))
+        for choice in [fromImage, fromOffset, fromPointer] {
+            let line = RingLog(
+                mode: "drag",
+                source: choice.source,
+                filename: "notes.txt",
+                icon: nil,
+                cell: nil,
+                pointer: pointer,
+                center: choice.center,
+                selectedCount: 1,
+                reason: choice.source.rawValue
+            ).line
+            XCTAssertTrue(line.hasPrefix("Pith: ring mode=drag source=\(choice.source.rawValue)"))
+            print(line)
         }
     }
 
@@ -130,34 +142,9 @@ final class IconRingGeometryTests: XCTestCase {
         )
         // The rejected piece is not a center, so the next anchor is logged.
         let pointer = Point(x: 430, y: 520)
-        let choice = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: nil, pointer: pointer)
+        let choice = IconRingGeometry.choose(dragImageCenter: nil, offsetCenter: nil, pointer: pointer)
         XCTAssertEqual(choice.source, .pointer)
         XCTAssertEqual(choice.center, pointer)
-        print(IconRingGeometry.logLine(source: choice.source, center: choice.center, pointer: pointer))
-    }
-
-    func testAccessibilityCenterFarFromThePointerUsesThePointer() {
-        let pointer = Point(x: 200, y: 300)
-        let radius = 200.0
-        let onWheel = Point(x: 200, y: 300 + radius)
-        let pastWheel = Point(x: 200, y: 300 + radius + 1)
-        XCTAssertEqual(IconRingGeometry.accessibilityCenter(onWheel, pointer: pointer, radius: radius), onWheel)
-        XCTAssertNil(IconRingGeometry.accessibilityCenter(pastWheel, pointer: pointer, radius: radius))
-        let kept = IconRingGeometry.choose(
-            dragImageCenter: nil,
-            accessibilityCenter: IconRingGeometry.accessibilityCenter(onWheel, pointer: pointer, radius: radius),
-            pointer: pointer
-        )
-        let dropped = IconRingGeometry.choose(
-            dragImageCenter: nil,
-            accessibilityCenter: IconRingGeometry.accessibilityCenter(pastWheel, pointer: pointer, radius: radius),
-            pointer: pointer
-        )
-        XCTAssertEqual(kept.source, .accessibility)
-        XCTAssertEqual(kept.center, onWheel)
-        XCTAssertEqual(dropped.source, .pointer)
-        XCTAssertEqual(dropped.center, pointer)
-        print(IconRingGeometry.logLine(source: dropped.source, center: dropped.center, pointer: pointer))
     }
 
     func testDragImageIconIsNotTheDragImageCenter() {

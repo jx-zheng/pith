@@ -21,6 +21,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     var onHoverIndex: ((Int?) -> Void)?
     /// Click-select mode: a segment was clicked.
     var onClickIndex: ((Int) -> Void)?
+    /// Click-select mode: the centre, a gap, a corner, or a wedge with no action.
+    var onMissClick: (() -> Void)?
 
     override init() {
         let side = PithTheme.wheelDiameter + PithTheme.panelPadding
@@ -104,14 +106,14 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         return draggingUpdated(sender)
     }
 
-    /// Places the ring, then reveals it. Drag-image icon, then the Finder icon
-    /// under the drag origin, then the pointer. The log names the source.
+    /// Places the ring once, then reveals it. A valid drag-image icon wins.
+    /// Otherwise the ring sits at `pointer + (icon at the grab - grab)`. The log names the source.
     private func alignRingToDraggedIcon(_ sender: NSDraggingInfo) {
         guard !alignedToIcon else { return }
         alignedToIcon = true
         let mouse = NSEvent.mouseLocation
-        let placement = DraggedIconRing.placement(of: sender, mouse: mouse, dragOrigin: dragOrigin, paths: dragPaths)
-        moveRing(to: placement.center)
+        let center = DraggedIconRing.placement(of: sender, mouse: mouse, dragOrigin: dragOrigin, paths: dragPaths)
+        moveRing(to: center)
         panel.alphaValue = 1
     }
 
@@ -162,11 +164,16 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         }
     }
 
-    func clicked(at windowPoint: NSPoint) {
-        guard let index = highlight(at: windowPoint),
-              model.segments.indices.contains(index),
-              model.segments[index].enabled else { return }
-        onClickIndex?(index)
+    /// Click mode. A wedge with an action runs. Every other point in the panel closes the wheel.
+    func clickDown(at windowPoint: NSPoint) {
+        let index = highlight(at: windowPoint)
+        let enabled = index.map { model.segments.indices.contains($0) && model.segments[$0].enabled } ?? false
+        switch WheelClick.decide(index: index, enabled: enabled) {
+        case .act(let index):
+            onClickIndex?(index)
+        case .close:
+            onMissClick?()
+        }
     }
 
     func draggingExited(_ sender: NSDraggingInfo?) {
@@ -227,11 +234,11 @@ final class WheelDropView: NSView {
         controller?.pointerMoved(to: NSPoint(x: -10_000, y: -10_000))
     }
 
-    override func mouseDown(with event: NSEvent) {}
-
-    override func mouseUp(with event: NSEvent) {
-        controller?.clicked(at: convert(event.locationInWindow, from: nil))
+    override func mouseDown(with event: NSEvent) {
+        controller?.clickDown(at: convert(event.locationInWindow, from: nil))
     }
+
+    override func mouseUp(with event: NSEvent) {}
 
     private func registerDragTypes() {
         var types: [NSPasteboard.PasteboardType] = [.fileURL, .URL]
