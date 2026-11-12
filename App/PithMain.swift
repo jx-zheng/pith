@@ -220,19 +220,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let paths = FinderSelection.paths()
         guard !paths.isEmpty else { return }
         let mouse = NSEvent.mouseLocation
-        let located = FinderIconLocator.locate(near: mouse, paths: paths)
-        let center = located.center ?? mouse
-        FinderIconLocator.log(located, mode: "click", mouse: mouse, paths: paths, center: center)
-        let point = Point(x: center.x, y: center.y)
-        let session = DragSession(
+        let point = Point(x: mouse.x, y: mouse.y)
+        var session = DragSession(
             changeCount: -1,
             filePaths: paths,
             hasFilePromise: false,
             promisedTypeIdentifiers: [],
             location: point
         )
+        guard let chosen = nonEmptyKind(startingAt: kind, session: session) else { return }
+        let located = FinderIconLocator.locate(near: mouse, paths: paths)
+        let center = located.center ?? mouse
+        FinderIconLocator.log(located, mode: "click", mouse: mouse, paths: paths, center: center)
+        session.location = Point(x: center.x, y: center.y)
         clickMode = true
-        showWheel(kind: kind, at: point, session: session)
+        showWheel(kind: chosen, at: session.location, session: session)
     }
 
     private func endClickMode() {
@@ -301,18 +303,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } as Any)
     }
 
-    private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
+    /// Kinds with no segments are skipped. Nil means every kind is empty.
+    private func nonEmptyKind(startingAt kind: WheelKind, session: DragSession) -> WheelKind? {
         model.refreshTools()
+        return WheelCycle.firstNonEmpty(startingAt: kind) { candidate in
+            !WheelContents.build(kind: candidate, session: session, availability: model.tools).segments.isEmpty
+        }
+    }
+
+    private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
         pushSettings()
-        self.kind = kind
+        guard let chosen = nonEmptyKind(startingAt: kind, session: session) else {
+            drag.machine.adoptShownWheel(nil, session: session)
+            if wheel.isShowing || clickMode {
+                clickMode = false
+                self.session = nil
+                dismissWheel()
+            }
+            return
+        }
+        drag.machine.adoptShownWheel(chosen, session: session)
+        self.kind = chosen
         self.session = session
-        let built = WheelContents.build(kind: kind, session: session, availability: model.tools)
+        let built = WheelContents.build(kind: chosen, session: session, availability: model.tools)
         self.built = built
         navigation = WheelNavigation(count: built.segments.count)
         let apply = { [wheel] in
             wheel.model.segments = built.segments
             wheel.model.highlighted = nil
-            wheel.model.centerText = built.segments.isEmpty ? "NOTHING" : built.centerFallback
+            wheel.model.centerText = built.centerFallback
         }
         if wheel.isShowing {
             // Cycling wheels in place: the old ring spins out and the next one settles in.
