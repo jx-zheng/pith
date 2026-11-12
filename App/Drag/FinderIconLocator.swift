@@ -103,11 +103,18 @@ enum FinderIconLocator {
     private static func children(of element: AXUIElement) -> [AXUIElement] {
         guard let value = copy(element, kAXChildrenAttribute as String),
               let array = value as? NSArray else { return [] }
-        return (0..<array.count).compactMap { array[$0] as? AXUIElement }
+        return (0..<array.count).compactMap { axElement(array[$0]) }
     }
 
     private static func parent(of element: AXUIElement) -> AXUIElement? {
-        copy(element, kAXParentAttribute as String) as? AXUIElement
+        guard let value = copy(element, kAXParentAttribute as String) else { return nil }
+        return axElement(value)
+    }
+
+    /// `as? AXUIElement` does not check the CoreFoundation type, so compare type IDs.
+    private static func axElement(_ value: Any) -> AXUIElement? {
+        guard let object = value as AnyObject?, CFGetTypeID(object) == AXUIElementGetTypeID() else { return nil }
+        return unsafeBitCast(object, to: AXUIElement.self)
     }
 
     private static func role(of element: AXUIElement) -> String? {
