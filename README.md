@@ -96,7 +96,7 @@ scripts/install.sh --app    # just build and install Pith
 
 The script uses Homebrew when the current user owns it. Otherwise it installs per user: ffmpeg, ffprobe and pandoc go to `~/.local/bin`, and LibreOffice goes to `~/Applications`. Pith looks in both places.
 
-Signing defaults to Automatic (your signed-in Apple ID team in Xcode). For Manual signing, export `PITH_TEAM` and `PITH_IDENTITY` before running `scripts/install.sh --app`.
+Signing defaults to Automatic (your signed-in Apple ID team in Xcode). For Manual signing, export `PITH_TEAM` and `PITH_IDENTITY` before running `scripts/install.sh --app`. If an Apple Development certificate is in your keychain, install.sh signs with it so Accessibility persists across rebuilds; override with PITH_IDENTITY.
 
 ### Homebrew
 
