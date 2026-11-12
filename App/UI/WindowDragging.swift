@@ -25,37 +25,22 @@ final class TitleBarDragView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        TitleBarDrag.track(window: window, from: event)
+        guard let window, window.isMovable else { return }
+        window.performDrag(with: event)
     }
 }
 
-enum TitleBarDrag {
-    /// How long `track` waits for the next mouse event. Tests lower this so a
-    /// missed mouse-up cannot hang the runner. A real drag keeps the default.
-    static var timeout: TimeInterval = 86_400
+/// Marks a control so tests can find its frame. The view sits behind the control.
+struct AccessibilityMarker: NSViewRepresentable {
+    var identifier: String
 
-    /// Moves `window` with the pointer until mouse-up.
-    /// The origin change is `currentScreen - startScreen`, computed in screen
-    /// space so a label-sized title strip and a system title bar move the same way.
-    static func track(window: NSWindow?, from event: NSEvent) {
-        guard let window, window.isMovable else { return }
-        let startOrigin = window.frame.origin
-        let startScreen = window.convertPoint(toScreen: event.locationInWindow)
-        window.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: timeout, mode: .eventTracking) { next, stop in
-            guard let next else {
-                stop.pointee = true
-                return
-            }
-            let current = window.convertPoint(toScreen: next.locationInWindow)
-            window.setFrameOrigin(NSPoint(
-                x: startOrigin.x + current.x - startScreen.x,
-                y: startOrigin.y + current.y - startScreen.y
-            ))
-            if next.type == .leftMouseUp {
-                stop.pointee = true
-            }
-        }
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        view.setAccessibilityIdentifier(identifier)
+        return view
     }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 
 /// Invisible title strip. Put it behind a window's own buttons so those still click.
@@ -81,9 +66,16 @@ extension View {
     /// controls drawn under it.
     func pithTitleBarDrag() -> some View {
         overlay(alignment: .top) {
-            WindowDragRegion()
-                .frame(height: 32)
-                .frame(maxWidth: .infinity)
+            // The leading gap is the traffic-light area, so the system close
+            // button still receives the click.
+            HStack(spacing: 0) {
+                Color.clear
+                    .frame(width: 78)
+                    .allowsHitTesting(false)
+                WindowDragRegion()
+            }
+            .frame(height: 32)
+            .frame(maxWidth: .infinity)
         }
     }
 }
@@ -95,6 +87,9 @@ enum PithWindowFactory {
         window.isOpaque = false
         window.backgroundColor = .clear
         window.isMovable = true
+        // `close()` must not release the window out from under ARC. Tests and
+        // the app both keep the NSWindow, and a second release crashes.
+        window.isReleasedWhenClosed = false
         // Canvas tools (crop, redact, annotate) drag inside the view. Only the
         // title strip moves the window.
         window.isMovableByWindowBackground = false

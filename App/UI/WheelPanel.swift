@@ -9,8 +9,14 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     private let panel: NSPanel
     private let dropView: WheelDropView
     private(set) var isShowing = false
-    /// Set once the drag image's icon component has positioned the ring.
+    /// Set once the ring has been placed for this presentation.
     private var alignedToIcon = false
+    /// The pointer where the wheel appeared. A drop waits until it moves, or until a later entry.
+    private var hover = RingHoverGate()
+    private var anchorMouse = Point.zero
+    private var sawInitialDragEntry = false
+    private var dragOrigin = CGPoint.zero
+    private var dragPaths: [String] = []
     var onDropIndex: ((Int) -> Void)?
     var onHoverIndex: ((Int?) -> Void)?
     /// Click-select mode: a segment was clicked.
@@ -39,8 +45,17 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
 
-    func present(at screenPoint: CGPoint) {
+    /// `hiddenUntilAligned` keeps a drag wheel invisible until the icon center is known,
+    /// so it does not appear on the pointer and then jump.
+    func present(at screenPoint: CGPoint, hiddenUntilAligned: Bool, dragOrigin: CGPoint, paths: [String]) {
         alignedToIcon = false
+        hover = RingHoverGate()
+        sawInitialDragEntry = false
+        anchorMouse = Point(x: Double(NSEvent.mouseLocation.x), y: Double(NSEvent.mouseLocation.y))
+        self.dragOrigin = dragOrigin
+        dragPaths = paths
+        model.highlighted = nil
+        panel.alphaValue = hiddenUntilAligned ? 0 : 1
         moveRing(to: screenPoint)
         if !isShowing {
             model.appeared = false
@@ -48,6 +63,12 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         }
         panel.orderFrontRegardless()
         isShowing = true
+        if hiddenUntilAligned {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.panel.alphaValue == 0 else { return }
+                self.panel.alphaValue = 1
+            }
+        }
     }
 
     func dismiss() {
@@ -76,17 +97,25 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
         NSLog("Pith: draggingEntered wheel")
         alignRingToDraggedIcon(sender)
+        // The entry that happens because the wheel just appeared is not a choice.
+        // Leaving and coming back is.
+        if sawInitialDragEntry {
+            hover.freshEntry()
+        } else {
+            sawInitialDragEntry = true
+        }
         return draggingUpdated(sender)
     }
 
-    /// Centers the wheel on the drag image's icon bitmap, once per presentation.
-    /// The pointer is often on the filename label, which is part of the cell and
-    /// not the icon. Later drag events leave the wheel where it appeared.
+    /// Places the ring, then reveals it. Drag-image icon, then the Finder icon
+    /// under the drag origin, then the pointer. The log names the source.
     private func alignRingToDraggedIcon(_ sender: NSDraggingInfo) {
         guard !alignedToIcon else { return }
-        guard let center = DraggedIconRing.center(of: sender, mouse: NSEvent.mouseLocation) else { return }
         alignedToIcon = true
-        moveRing(to: center)
+        let mouse = NSEvent.mouseLocation
+        let placement = DraggedIconRing.placement(of: sender, mouse: mouse, dragOrigin: dragOrigin, paths: dragPaths)
+        moveRing(to: placement.center)
+        panel.alphaValue = 1
     }
 
     private func moveRing(to screenPoint: CGPoint) {
@@ -101,19 +130,35 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
 
     func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
         alignRingToDraggedIcon(sender)
+        notePointer()
         let index = highlight(at: sender.draggingLocation)
-        if model.highlighted != index {
-            model.highlighted = index
-            onHoverIndex?(index)
-        }
-        guard let index, model.segments.indices.contains(index), model.segments[index].enabled else {
+        publishHover(index)
+        guard hover.canCommit(segment: index) != nil,
+              let index, model.segments.indices.contains(index), model.segments[index].enabled else {
             return []
         }
         return .copy
     }
 
     func pointerMoved(to windowPoint: NSPoint) {
-        let index = highlight(at: windowPoint)
+        notePointer()
+        publishHover(highlight(at: windowPoint))
+    }
+
+    private func notePointer() {
+        let mouse = NSEvent.mouseLocation
+        hover.pointerMoved(from: anchorMouse, to: Point(x: Double(mouse.x), y: Double(mouse.y)))
+    }
+
+    /// Outside the ring, `index` is nil and any previous highlight is cleared.
+    private func publishHover(_ index: Int?) {
+        guard hover.armed else {
+            if model.highlighted != nil {
+                model.highlighted = nil
+                onHoverIndex?(nil)
+            }
+            return
+        }
         if model.highlighted != index {
             model.highlighted = index
             onHoverIndex?(index)
@@ -136,8 +181,10 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
 
     func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         NSLog("Pith: performDragOperation at %@", NSStringFromPoint(sender.draggingLocation))
-        let index = highlight(at: sender.draggingLocation) ?? model.highlighted
-        guard let index, model.segments.indices.contains(index), model.segments[index].enabled else {
+        let index = highlight(at: sender.draggingLocation)
+        guard let index = hover.canCommit(segment: index),
+              model.segments.indices.contains(index),
+              model.segments[index].enabled else {
             return false
         }
         onDropIndex?(index)

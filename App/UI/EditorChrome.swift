@@ -31,6 +31,7 @@ struct EditorChrome<Content: View>: View {
                                 .background(Circle().fill(Color.white.opacity(0.35)))
                         }
                         .buttonStyle(.plain)
+                        .background(AccessibilityMarker(identifier: "pith.close"))
                         Spacer()
                             .allowsHitTesting(false)
                     }
@@ -165,6 +166,7 @@ enum EditorWindow {
             defer: false
         )
         PithWindowFactory.configureEditor(window)
+        window.isReleasedWhenClosed = false
         window.center()
         let host = NSHostingView(rootView: content())
         host.frame = NSRect(origin: .zero, size: size)

@@ -317,11 +317,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             apply()
         }
+        let paths = session.filePaths
         if let point {
-            wheel.present(at: CGPoint(x: point.x, y: point.y))
+            let screen = CGPoint(x: point.x, y: point.y)
+            let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? screen
+            // A drag wheel stays invisible until the icon center is known, so it
+            // does not flash on the pointer and then jump. Click mode already
+            // resolved the icon before this call.
+            wheel.present(at: screen, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: paths)
         } else if !wheel.isShowing {
             let mouse = NSEvent.mouseLocation
-            wheel.present(at: mouse)
+            let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? mouse
+            wheel.present(at: mouse, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: paths)
         }
     }
 

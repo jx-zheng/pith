@@ -68,6 +68,9 @@ targets:
       - path: App/UI/EditorChrome.swift
       - path: App/UI/Theme.swift
       - path: App/UI/ProgressHUD.swift
+      - path: App/UI/Editors/ImageEditors.swift
+      - path: App/UI/Editors/MarkupEditors.swift
+      - path: App/Engine/ImageIOBridge.swift
     dependencies:
       - package: PithCore
         product: PithCore

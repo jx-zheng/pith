@@ -86,20 +86,35 @@ final class IconRingGeometryTests: XCTestCase {
         XCTAssertNil(IconRingGeometry.iconImage(inside: cell, images: []))
     }
 
-    func testRetinaScalesShareOnePointCenter() {
-        // Same icon on screen: 64 pt at (50, 80). 2x is 128 px at (100, 160). 3x is 192 px at (150, 240).
-        let at2x = IconRingGeometry.points(fromPixels: RingRect(x: 100, y: 160, width: 128, height: 128), scale: 2)
-        let at3x = IconRingGeometry.points(fromPixels: RingRect(x: 150, y: 240, width: 192, height: 192), scale: 3)
-        let at1x = IconRingGeometry.points(fromPixels: RingRect(x: 50, y: 80, width: 64, height: 64), scale: 1)
-        XCTAssertEqual(at2x, at1x)
-        XCTAssertEqual(at3x, at1x)
-        XCTAssertEqual(IconRingGeometry.center(of: at2x), IconRingGeometry.center(of: at3x))
-        XCTAssertEqual(IconRingGeometry.center(of: at2x), Point(x: 82, y: 112))
-        // A hard-coded divide-by-2 would put the 3x icon at the wrong point center.
-        let wrong = IconRingGeometry.points(fromPixels: RingRect(x: 150, y: 240, width: 192, height: 192), scale: 2)
-        XCTAssertNotEqual(IconRingGeometry.center(of: wrong), IconRingGeometry.center(of: at3x))
-        evidence("retina-2x", icon: at2x, cell: RingRect(x: 40, y: 70, width: 90, height: 130))
-        evidence("retina-3x", icon: at3x, cell: RingRect(x: 40, y: 70, width: 90, height: 130))
+    func testRingLogNamesEveryAnchorSource() {
+        let pointer = Point(x: 200, y: 300)
+        let icon = Point(x: 200, y: 340)
+        let ax = Point(x: 188, y: 320)
+        let fromImage = IconRingGeometry.choose(dragImageCenter: icon, accessibilityCenter: ax, pointer: pointer)
+        let fromAX = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: ax, pointer: pointer)
+        let fromPointer = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: nil, pointer: pointer)
+        XCTAssertEqual(fromImage.source, .dragImage)
+        XCTAssertEqual(fromImage.center, icon)
+        XCTAssertEqual(fromAX.source, .accessibility)
+        XCTAssertEqual(fromAX.center, ax)
+        XCTAssertEqual(fromPointer.source, .pointer)
+        XCTAssertEqual(fromPointer.center, pointer)
+        for choice in [fromImage, fromAX, fromPointer] {
+            print(IconRingGeometry.logLine(source: choice.source, center: choice.center, pointer: pointer))
+        }
+    }
+
+    func testDropWaitsForPointerMovementOrAFreshEntry() {
+        var gate = RingHoverGate()
+        let anchor = Point(x: 10, y: 10)
+        gate.pointerMoved(from: anchor, to: Point(x: 11, y: 10))
+        XCTAssertNil(gate.canCommit(segment: 2), "the pointer is still where the wheel appeared")
+        gate.pointerMoved(from: anchor, to: Point(x: 14, y: 10))
+        XCTAssertEqual(gate.canCommit(segment: 2), 2)
+        XCTAssertNil(gate.canCommit(segment: nil), "outside the ring is not a segment")
+        var fresh = RingHoverGate()
+        fresh.freshEntry()
+        XCTAssertEqual(fresh.canCommit(segment: 0), 0)
     }
 
     func testDragImageIconIsNotTheDragImageCenter() {
@@ -129,17 +144,6 @@ final class IconRingGeometryTests: XCTestCase {
         let origin = IconRingGeometry.panelOrigin(center: center, panelWidth: side, panelHeight: side)
         XCTAssertEqual(origin.x + side / 2, center.x, accuracy: 0.0001)
         XCTAssertEqual(origin.y + side / 2, center.y, accuracy: 0.0001)
-        for scale in [1.0, 2.0, 3.0] {
-            let pixels = RingRect(
-                x: center.x * scale - 32 * scale,
-                y: center.y * scale - 32 * scale,
-                width: 64 * scale,
-                height: 64 * scale
-            )
-            let points = IconRingGeometry.points(fromPixels: pixels, scale: scale)
-            XCTAssertEqual(IconRingGeometry.center(of: points).x, center.x, accuracy: 0.0001)
-            XCTAssertEqual(IconRingGeometry.center(of: points).y, center.y, accuracy: 0.0001)
-        }
     }
 
     func testAccessibilityYIsTheInverseOfAppKitY() {

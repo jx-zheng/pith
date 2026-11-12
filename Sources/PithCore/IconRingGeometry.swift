@@ -67,16 +67,18 @@ public enum IconRingGeometry {
         )
     }
 
-    /// Pixel bounds to points. `scale` is the screen's backing scale (1, 2, 3, …).
-    /// Dividing by the real scale keeps the icon center put; a hard-coded 2 would
-    /// miss on a 3x display.
-    public static func points(fromPixels rect: RingRect, scale: Double) -> RingRect {
-        let divisor = (scale.isFinite && scale > 0) ? scale : 1
-        return RingRect(
-            x: rect.x / divisor,
-            y: rect.y / divisor,
-            width: rect.width / divisor,
-            height: rect.height / divisor
+    /// Which measurement produced the ring center. Drag-image bounds win, then the
+    /// Finder icon under the drag origin, then the pointer.
+    public static func choose(dragImageCenter: Point?, accessibilityCenter: Point?, pointer: Point) -> (center: Point, source: RingAnchorSource) {
+        if let dragImageCenter { return (dragImageCenter, .dragImage) }
+        if let accessibilityCenter { return (accessibilityCenter, .accessibility) }
+        return (pointer, .pointer)
+    }
+
+    public static func logLine(source: RingAnchorSource, center: Point, pointer: Point) -> String {
+        String(
+            format: "Pith: drag ring source=%@ center=(%.1f,%.1f) pointer=(%.1f,%.1f)",
+            source.rawValue, center.x, center.y, pointer.x, pointer.y
         )
     }
 
@@ -117,5 +119,41 @@ public enum IconRingGeometry {
         let long = max(rect.width, rect.height)
         guard long > 0 else { return false }
         return abs(rect.width - rect.height) / long <= 0.15
+    }
+}
+
+public enum RingAnchorSource: String, Equatable, Sendable {
+    case dragImage = "drag-image"
+    case accessibility = "accessibility"
+    case pointer = "pointer"
+}
+
+/// A drop on the wheel counts only after the pointer moves, or after it leaves
+/// and comes back. The position where the wheel appeared is not a choice:
+/// recentering onto a list-row icon can leave the pointer already on a segment.
+public struct RingHoverGate: Equatable, Sendable {
+    public var armed = false
+    /// Movement smaller than this is the pointer sitting still while the wheel appears.
+    public static let movement: Double = 3
+
+    public init() {}
+
+    public mutating func pointerMoved(from anchor: Point, to pointer: Point) {
+        guard !armed else { return }
+        let dx = pointer.x - anchor.x
+        let dy = pointer.y - anchor.y
+        if dx * dx + dy * dy >= Self.movement * Self.movement {
+            armed = true
+        }
+    }
+
+    public mutating func freshEntry() {
+        armed = true
+    }
+
+    /// `segment` is nil when the pointer is outside the ring. A stale highlight is not used.
+    public func canCommit(segment: Int?) -> Int? {
+        guard armed else { return nil }
+        return segment
     }
 }

@@ -1,47 +1,51 @@
 name: macOS checks
 
 on:
-  push:
-    paths:
-      - "App/**"
-      - "Tests/PithWindowTests/**"
-      - "Sources/PithCore/IconRingGeometry.swift"
-      - "Tests/PithCoreTests/IconRingGeometryTests.swift"
-      - "project.yml"
-      - "Package.swift"
-      - ".github/workflows/macos.yml"
   pull_request:
     paths:
       - "App/**"
       - "Tests/PithWindowTests/**"
-      - "Sources/PithCore/IconRingGeometry.swift"
-      - "Tests/PithCoreTests/IconRingGeometryTests.swift"
+      - "Tests/PithCoreTests/**"
+      - "Sources/PithCore/**"
       - "project.yml"
       - "Package.swift"
       - ".github/workflows/macos.yml"
 
 concurrency:
-  group: macos-${{ github.workflow }}-${{ github.ref }}
+  group: macos-${{ github.workflow }}-${{ github.head_ref || github.ref }}
   cancel-in-progress: true
 
 jobs:
-  window-tests:
+  tests:
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - name: Generate the Xcode project
         run: |
           brew install xcodegen
           xcodegen generate
-      - name: Title-bar drag tests
+          mkdir -p build
+      - name: Core and window tests
         run: |
+          set -o pipefail
           xcodebuild test \
             -project Pith.xcodeproj \
             -scheme Pith \
             -destination 'platform=macOS' \
+            -only-testing:PithCoreTests \
             -only-testing:PithWindowTests \
+            -resultBundlePath build/macos-tests.xcresult \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY=- \
-            ENABLE_HARDENED_RUNTIME=NO
+            ENABLE_HARDENED_RUNTIME=NO \
+            | tee build/macos-tests.log
+      - name: Upload test log and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-test-results
+          path: |
+            build/macos-tests.log
+            build/macos-tests.xcresult

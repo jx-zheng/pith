@@ -6,9 +6,32 @@ import PithCore
 /// The drag image is the cell: icon bitmap plus the filename label (and the
 /// padding around them). `NSDraggingImageComponent.Key.icon` is the bitmap.
 /// Its frame is in the dragging item's bounds, origin at the bottom-left of
-/// `draggingFrame` (AppKit, y up). The ring uses that image, not the cell.
+/// `draggingFrame` (AppKit, y up). If that piece is missing, the Finder icon
+/// under the drag origin is next. The pointer is last, and the log says which
+/// one was used.
 enum DraggedIconRing {
-    static func center(of sender: NSDraggingInfo, mouse: CGPoint) -> CGPoint? {
+    static func placement(of sender: NSDraggingInfo, mouse: CGPoint, dragOrigin: CGPoint, paths: [String]) -> (center: CGPoint, source: RingAnchorSource) {
+        let dragImage = iconCenter(of: sender, mouse: mouse)
+        let accessibility = dragImage == nil
+            ? FinderIconLocator.iconCenter(near: dragOrigin, paths: paths)
+            : nil
+        let choice = IconRingGeometry.choose(
+            dragImageCenter: dragImage.map { Point(x: Double($0.x), y: Double($0.y)) },
+            accessibilityCenter: accessibility.map { Point(x: Double($0.x), y: Double($0.y)) },
+            pointer: Point(x: Double(mouse.x), y: Double(mouse.y))
+        )
+        let line = IconRingGeometry.logLine(
+            source: choice.source,
+            center: choice.center,
+            pointer: Point(x: Double(mouse.x), y: Double(mouse.y))
+        )
+        NSLog("%@", line as NSString)
+        return (CGPoint(x: choice.center.x, y: choice.center.y), choice.source)
+    }
+
+    /// Screen center of the icon component, or nil when the drag image has no icon piece
+    /// or the pointer is not on that drag image.
+    private static func iconCenter(of sender: NSDraggingInfo, mouse: CGPoint) -> CGPoint? {
         var found: CGPoint?
         sender.enumerateDraggingItems(
             options: [],
@@ -22,14 +45,8 @@ enum DraggedIconRing {
             guard piece.width > 1, piece.height > 1 else { return }
             let placed = IconRingGeometry.placedIcon(draggingFrame: frame, iconComponent: piece)
             let pointer = Point(x: Double(mouse.x), y: Double(mouse.y))
-            // The pointer is on the icon or on its label, so it is inside the drag image.
-            // A frame that doesn't contain it belongs to some other item.
             guard IconRingGeometry.contains(frame, point: pointer) || IconRingGeometry.contains(placed, point: pointer) else { return }
             let center = IconRingGeometry.center(of: placed)
-            NSLog(
-                "Pith: drag ring icon=(%.1f,%.1f) cell=(%.1f,%.1f) pointer=(%.1f,%.1f)",
-                center.x, center.y, frame.center.x, frame.center.y, pointer.x, pointer.y
-            )
             found = CGPoint(x: center.x, y: center.y)
             stop.pointee = true
         }

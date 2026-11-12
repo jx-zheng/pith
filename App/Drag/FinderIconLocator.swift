@@ -10,13 +10,17 @@ import PithCore
 /// the result. Returns nil when Accessibility is off or the icon image cannot
 /// be separated from the cell; the caller then keeps the pointer.
 enum FinderIconLocator {
+    /// The whole lookup, including every child query, stops after this.
+    private static let budget: TimeInterval = 0.25
+
     static func iconCenter(near mouse: CGPoint, paths: [String]) -> CGPoint? {
         guard AccessibilityPermission.isTrusted(prompt: false) else { return nil }
         guard let primary = NSScreen.screens.first else { return nil }
         let maxY = Double(primary.frame.maxY)
         let axY = IconRingGeometry.topLeftY(fromAppKitY: Double(mouse.y), mainScreenMaxY: maxY)
         let system = AXUIElementCreateSystemWide()
-        AXUIElementSetMessagingTimeout(system, 0.4)
+        let deadline = Date().addingTimeInterval(budget)
+        AXUIElementSetMessagingTimeout(system, Float(budget))
         var hit: AXUIElement?
         let status = AXUIElementCopyElementAtPosition(system, Float(mouse.x), Float(axY), &hit)
         guard status == .success, let hit else { return nil }
@@ -26,7 +30,7 @@ enum FinderIconLocator {
             .contains(where: { $0.processIdentifier == pid }) else { return nil }
 
         let pointer = Point(x: Double(mouse.x), y: axY)
-        guard let match = resolve(startingAt: hit, pointer: pointer, paths: paths) else { return nil }
+        guard let match = resolve(startingAt: hit, pointer: pointer, paths: paths, deadline: deadline) else { return nil }
         let center = IconRingGeometry.center(of: match.icon)
         let appKitY = IconRingGeometry.appKitY(fromTopLeftY: center.y, mainScreenMaxY: maxY)
         NSLog(
@@ -38,10 +42,11 @@ enum FinderIconLocator {
         return CGPoint(x: center.x, y: appKitY)
     }
 
-    private static func resolve(startingAt element: AXUIElement, pointer: Point, paths: [String]) -> (icon: RingRect, cell: RingRect)? {
+    private static func resolve(startingAt element: AXUIElement, pointer: Point, paths: [String], deadline: Date) -> (icon: RingRect, cell: RingRect)? {
         var current: AXUIElement? = element
         for _ in 0..<8 {
-            guard let node = current else { break }
+            guard Date() < deadline, let node = current else { break }
+            AXUIElementSetMessagingTimeout(node, 0.05)
             if let role = role(of: node), stopRoles.contains(role) { break }
             if let cell = frame(of: node), IconRingGeometry.contains(cell, point: pointer) {
                 var images: [RingRect] = []
@@ -151,6 +156,7 @@ enum FinderIconLocator {
     }
 
     private static func copy(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+        AXUIElementSetMessagingTimeout(element, 0.05)
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value
