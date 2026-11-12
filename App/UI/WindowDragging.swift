@@ -132,6 +132,13 @@ enum PithWindowFactory {
         return window
     }
 
+    /// Folder choosers come back with `isMovable == false`. The titled panel the
+    /// user sees should still move by its title bar.
+    static func configureChooser(_ panel: NSOpenPanel) {
+        panel.isMovable = true
+        panel.isMovableByWindowBackground = false
+    }
+
     static func makeHUDPanel() -> NSPanel {
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: 286, height: 78),

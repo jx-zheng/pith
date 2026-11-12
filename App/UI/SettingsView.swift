@@ -193,6 +193,7 @@ struct SettingsView: View {
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
+        PithWindowFactory.configureChooser(panel)
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.canCreateDirectories = true

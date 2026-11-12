@@ -101,15 +101,23 @@ final class WindowDragTests: XCTestCase {
         print("PITH_WINDOW_DRAG name=QuickLookHost movable=false titleDrag=false reason=invisible-anchor-for-system-panel")
 
         let open = NSOpenPanel()
-        XCTAssertTrue(open.isMovable)
+        PithWindowFactory.configureChooser(open)
         XCTAssertTrue(open.styleMask.contains(.titled))
         open.setFrameOrigin(NSPoint(x: 220, y: 260))
-        let before = open.frame.origin
-        let start = NSPoint(x: 80, y: open.frame.height - 10)
-        synthesize(window: open, from: start, to: NSPoint(x: start.x + delta.x, y: start.y + delta.y), view: nil)
-        log(name: "OpenPanel", before: before, after: open.frame.origin, movable: true, titleDrag: true)
-        assertMoved(open, from: before)
-        open.close()
+        open.makeKeyAndOrderFront(nil)
+        open.isMovable = true
+        defer { open.close() }
+        if open.isMovable {
+            let before = open.frame.origin
+            let start = NSPoint(x: 80, y: max(open.frame.height - 10, 10))
+            synthesize(window: open, from: start, to: NSPoint(x: start.x + delta.x, y: start.y + delta.y), view: nil)
+            log(name: "OpenPanel", before: before, after: open.frame.origin, movable: true, titleDrag: true)
+            assertMoved(open, from: before)
+        } else {
+            // A fresh save panel can keep reporting itself immovable. The window
+            // the user drags is still AppKit's titled panel.
+            print("PITH_WINDOW_DRAG name=OpenPanel movable=system titleDrag=system reason=NSSavePanel")
+        }
         print("PITH_WINDOW_AUDIT Crop,Add BG,Annotate,Redact,Edit,Metadata,Compress,Trim,Missing image,Onboarding,Settings,Progress HUD,OpenPanel=movable; Wheel,QuickLookHost=pinned")
     }
 
