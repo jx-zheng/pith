@@ -41,13 +41,14 @@ final class TitleBarDragView: NSView {
         guard followQueue else { return }
         let deadline = Date().addingTimeInterval(0.3)
         while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: deadline, inMode: .default, dequeue: true) {
-            // Original frame plus the posted event's window location. Do not
-            // convert through the window after it has moved; that counts the move twice.
+            // mouseUp's window location is read after the window has moved, so
+            // applying it cancels the drag. The dragged event still carries the
+            // original window location; the offset is from the original frame.
+            if next.type == .leftMouseUp { break }
             window.setFrameOrigin(NSPoint(
                 x: origin.x + (next.locationInWindow.x - start.x),
                 y: origin.y + (next.locationInWindow.y - start.y)
             ))
-            if next.type == .leftMouseUp { break }
         }
     }
 }

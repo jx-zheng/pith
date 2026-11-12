@@ -179,21 +179,20 @@ final class WindowDragTests: XCTestCase {
         XCTAssertTrue(isDragStrip(hit), "\(name): header point hit \(String(describing: hit.map { type(of: $0) }))")
         let end = NSPoint(x: inWindow.x + delta.x, y: inWindow.y + delta.y)
         let before = window.frame.origin
-        sendHeaderDrag(on: drag, window: window, from: inWindow, to: end)
+        sendHeaderDrag(window: window, from: inWindow, to: end)
         let after = window.frame.origin
         log(name: name, before: before, after: after)
         XCTAssertEqual(after.x - before.x, delta.x, accuracy: 0.5, "\(name): dx")
         XCTAssertEqual(after.y - before.y, delta.y, accuracy: 0.5, "\(name): dy")
     }
 
-    /// Hit testing above proved the strip is the view under the header. The drag
-    /// is delivered to that view directly: `sendEvent` marks the left button down,
-    /// and a button-down click must only call `performDrag`. With the button up,
-    /// the strip follows the drag events already in the queue.
-    private func sendHeaderDrag(on drag: TitleBarDragView, window: NSWindow, from start: NSPoint, to end: NSPoint) {
+    /// `sendEvent` hit-tests to the strip. The drag and mouse-up are already queued.
+    /// The strip follows them only when no left button is down.
+    private func sendHeaderDrag(window: NSWindow, from start: NSPoint, to end: NSPoint) {
+        TitleBarDragView.followsQueuedEventsForTesting = true
         NSApp.postEvent(mouse(.leftMouseDragged, at: end, window: window), atStart: false)
         NSApp.postEvent(mouse(.leftMouseUp, at: end, window: window), atStart: false)
-        drag.mouseDown(with: mouse(.leftMouseDown, at: start, window: window))
+        window.sendEvent(mouse(.leftMouseDown, at: start, window: window))
     }
 
     private func isDragStrip(_ view: NSView?) -> Bool {
