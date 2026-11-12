@@ -153,6 +153,30 @@ enum PithWindowFactory {
         return panel
     }
 
+    /// Borderless radial menu. It stays on the file icon. A title bar would steal
+    /// segment clicks and the drop, so this panel is not movable.
+    static func makeWheelPanel(side: CGFloat) -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: side, height: side),
+            styleMask: [.borderless, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.isFloatingPanel = true
+        panel.level = .popUpMenu
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = false
+        panel.hidesOnDeactivate = false
+        panel.ignoresMouseEvents = false
+        panel.isMovable = false
+        panel.becomesKeyOnlyIfNeeded = true
+        panel.isReleasedWhenClosed = false
+        panel.acceptsMouseMovedEvents = true
+        return panel
+    }
+
     /// Invisible anchor for the system Quick Look panel. The panel the user sees
     /// is `QLPreviewPanel`, which has its own title bar. This host is not a window
     /// anyone drags.

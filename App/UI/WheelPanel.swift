@@ -18,28 +18,9 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
 
     override init() {
         let side = PithTheme.wheelDiameter + PithTheme.panelPadding
-        panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: side, height: side),
-            styleMask: [.borderless, .nonactivatingPanel],
-            backing: .buffered,
-            defer: false
-        )
+        panel = PithWindowFactory.makeWheelPanel(side: side)
         dropView = WheelDropView(frame: NSRect(x: 0, y: 0, width: side, height: side))
         super.init()
-        panel.isFloatingPanel = true
-        panel.level = .popUpMenu
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle, .transient]
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = false
-        panel.hidesOnDeactivate = false
-        panel.ignoresMouseEvents = false
-        // The wheel stays on the file icon. It is not a window with a title bar;
-        // dragging it would steal segment clicks and the drop.
-        panel.isMovable = false
-        panel.becomesKeyOnlyIfNeeded = true
-        panel.isReleasedWhenClosed = false
-        panel.acceptsMouseMovedEvents = true
         dropView.controller = self
         // The SwiftUI hosting view registers its own drag types and would swallow the
         // drop if it sat above the destination view. Keep it underneath, and put the
@@ -57,10 +38,6 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         dropView.autoresizingMask = [.width, .height]
         container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
-
-    /// The panel is not a title-bar window. Audits read this instead of reaching into the panel.
-    var isMovableForAudit: Bool { panel.isMovable }
-    var styleMaskForAudit: NSWindow.StyleMask { panel.styleMask }
 
     func present(at screenPoint: CGPoint) {
         alignedToIcon = false

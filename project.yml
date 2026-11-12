@@ -68,10 +68,6 @@ targets:
       - path: App/UI/EditorChrome.swift
       - path: App/UI/Theme.swift
       - path: App/UI/ProgressHUD.swift
-      - path: App/UI/WheelView.swift
-      - path: App/UI/WheelPanel.swift
-      - path: App/UI/AnnularSegmentShape.swift
-      - path: App/Drag/DraggedIconRing.swift
     dependencies:
       - package: PithCore
         product: PithCore

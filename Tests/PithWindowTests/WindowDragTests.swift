@@ -87,10 +87,10 @@ final class WindowDragTests: XCTestCase {
     }
 
     func testWheelStaysPinnedAndQuickLookHostIsNotAWindowYouDrag() {
-        let wheel = WheelPanelController()
-        XCTAssertFalse(wheel.isMovableForAudit)
-        XCTAssertTrue(wheel.styleMaskForAudit.contains(.borderless))
-        XCTAssertFalse(wheel.styleMaskForAudit.contains(.titled))
+        let wheel = PithWindowFactory.makeWheelPanel(side: 436)
+        XCTAssertFalse(wheel.isMovable)
+        XCTAssertTrue(wheel.styleMask.contains(.borderless))
+        XCTAssertFalse(wheel.styleMask.contains(.titled))
         print("PITH_WINDOW_DRAG name=Wheel movable=false pinned=true titleDrag=false reason=radial-menu")
 
         let host = PithWindowFactory.makeQuickLookHost()
