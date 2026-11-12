@@ -89,10 +89,10 @@ final class HUDPanelController: NSObject, NSWindowDelegate {
         let root = ProgressHUDView(title: job.title, subtitle: job.subtitle, progress: job.progress) { [weak self] in
             self?.onCancel?(job.id)
         }
-        if let host = panel.contentView as? NSHostingView<ProgressHUDView> {
+        if let host = panel.contentView as? PithHostingView<ProgressHUDView> {
             host.rootView = root
         } else {
-            let host = NSHostingView(rootView: root)
+            let host = PithHostingView(rootView: root)
             host.frame = NSRect(x: 0, y: 0, width: 286, height: 78)
             panel.contentView = host
         }

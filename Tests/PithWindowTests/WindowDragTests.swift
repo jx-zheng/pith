@@ -59,7 +59,7 @@ final class WindowDragTests: XCTestCase {
 
     func testOnboardingCloseButtonStillWorks() {
         let window = PithWindowFactory.makeOnboarding(
-            content: NSHostingView(rootView: OnboardingView(onGrant: {}, onLater: {}))
+            content: PithHostingView(rootView: OnboardingView(onGrant: {}, onLater: {}))
         )
         window.setFrameOrigin(NSPoint(x: 160, y: 180))
         window.makeKeyAndOrderFront(nil)
@@ -87,7 +87,7 @@ final class WindowDragTests: XCTestCase {
         assertTitleDrag(missing, name: "Missing image")
 
         let onboarding = PithWindowFactory.makeOnboarding(
-            content: NSHostingView(rootView: OnboardingView(onGrant: {}, onLater: {}))
+            content: PithHostingView(rootView: OnboardingView(onGrant: {}, onLater: {}))
         )
         onboarding.setFrameOrigin(NSPoint(x: 160, y: 180))
         onboarding.makeKeyAndOrderFront(nil)
@@ -178,28 +178,32 @@ final class WindowDragTests: XCTestCase {
         XCTAssertNotEqual(window.frame.origin, before, "\(name): title drag did not move the window")
     }
 
-    /// Mouse-down goes through `sendEvent`, which hit-tests the header. `performDrag`
-    /// then tracks. The dragged and mouse-up events are posted into the tracking
-    /// run loop; a session-level mouse-up is the backstop so the modal loop cannot
-    /// hang the runner.
+    /// Hit-testing the header returns the drag strip. The mouse-down, drag, and
+    /// mouse-up are posted before the run loop so `performDrag` (started from that
+    /// mouse-down) consumes them instead of waiting on a cursor that never moves.
     private func sendHeaderDrag(window: NSWindow, from start: NSPoint, to end: NSPoint) {
-        let endScreen = window.convertPoint(toScreen: end)
-        let cg = Self.cgPoint(fromAppKit: endScreen)
-        let done = DragFinished()
-        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
-            guard !done.done else { return }
-            CGWarpMouseCursorPosition(cg)
-            CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: cg, mouseButton: .left)?.post(tap: .cgSessionEventTap)
+        let startCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: start))
+        let endCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: end))
+        func post(_ type: CGEventType, _ point: CGPoint) {
+            let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
+            event?.post(tap: .cghidEventTap)
+            event?.post(tap: .cgSessionEventTap)
         }
-        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
-            NSApp.postEvent(self.mouse(.leftMouseDragged, at: end, window: window), atStart: false)
-            NSApp.postEvent(self.mouse(.leftMouseUp, at: end, window: window), atStart: false)
+        let before = window.frame.origin
+        CGWarpMouseCursorPosition(endCG)
+        NSApp.postEvent(mouse(.leftMouseDown, at: start, window: window), atStart: false)
+        NSApp.postEvent(mouse(.leftMouseDragged, at: end, window: window), atStart: false)
+        NSApp.postEvent(mouse(.leftMouseUp, at: end, window: window), atStart: false)
+        post(.leftMouseDown, startCG)
+        post(.leftMouseDragged, endCG)
+        post(.leftMouseUp, endCG)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        guard window.frame.origin == before else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            post(.leftMouseDragged, endCG)
+            post(.leftMouseUp, endCG)
         }
-        RunLoop.current.add(timer, forMode: .eventTracking)
-        RunLoop.current.add(timer, forMode: .common)
         window.sendEvent(mouse(.leftMouseDown, at: start, window: window))
-        done.done = true
-        timer.invalidate()
     }
 
     private func isDragStrip(_ view: NSView?) -> Bool {
@@ -228,7 +232,7 @@ final class WindowDragTests: XCTestCase {
 
     private func log(name: String, before: NSPoint, after: NSPoint) {
         let line = String(
-            format: "PITH_WINDOW_DRAG name=%@ before=(%.1f,%.1f) after=(%.1f,%.1f) dx=%.1f dy=%.1f movable=true titleDrag=true routed=sendEvent",
+            format: "PITH_WINDOW_DRAG name=%@ before=(%.1f,%.1f) after=(%.1f,%.1f) dx=%.1f dy=%.1f movable=true titleDrag=true routed=hitTest",
             name, before.x, before.y, after.x, after.y, after.x - before.x, after.y - before.y
         )
         print(line)

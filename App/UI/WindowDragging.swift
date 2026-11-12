@@ -30,6 +30,31 @@ final class TitleBarDragView: NSView {
     }
 }
 
+/// SwiftUI's hosting view otherwise returns itself from `hitTest`, so a click on the
+/// title strip never reaches `TitleBarDragView`.
+final class PithHostingView<Content: View>: NSHostingView<Content> {
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        if let drag = dragView(in: self, point: point) {
+            return drag
+        }
+        return super.hitTest(point)
+    }
+
+    private func dragView(in view: NSView, point: NSPoint) -> NSView? {
+        for subview in view.subviews.reversed() {
+            guard !subview.isHidden else { continue }
+            let local = view.convert(point, to: subview)
+            if let nested = dragView(in: subview, point: local) {
+                return nested
+            }
+            if subview is TitleBarDragView, subview.bounds.contains(local) {
+                return subview
+            }
+        }
+        return nil
+    }
+}
+
 /// Marks a control so tests can find its frame. The view sits behind the control.
 struct AccessibilityMarker: NSViewRepresentable {
     var identifier: String

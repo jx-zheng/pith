@@ -452,7 +452,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             box.window = nil
             self?.onboardingWindow = nil
         }
-        let window = PithWindowFactory.makeOnboarding(content: NSHostingView(rootView: OnboardingView(
+        let window = PithWindowFactory.makeOnboarding(content: PithHostingView(rootView: OnboardingView(
             onGrant: {
                 _ = AccessibilityPermission.isTrusted(prompt: true)
                 close()

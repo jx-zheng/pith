@@ -168,7 +168,7 @@ enum EditorWindow {
         PithWindowFactory.configureEditor(window)
         window.isReleasedWhenClosed = false
         window.center()
-        let host = NSHostingView(rootView: content())
+        let host = PithHostingView(rootView: content())
         host.frame = NSRect(origin: .zero, size: size)
         host.wantsLayer = true
         host.layer?.cornerRadius = 22
