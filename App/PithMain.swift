@@ -209,7 +209,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Select a file in Finder (click and release), then tap Shift.
     /// Another Shift tap cycles Convert → Tools → Actions in place.
-    /// Escape and a click outside still dismiss; Shift does not.
+    /// Escape dismisses. So does any click that is not a wedge with an action. Shift does not.
     private func handleIdleTap(_ kind: WheelKind) {
         if clickMode, wheel.isShowing, let session {
             showWheel(kind: self.kind.next, at: nil, session: session)
@@ -221,15 +221,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !paths.isEmpty else { return }
         let mouse = NSEvent.mouseLocation
         let point = Point(x: mouse.x, y: mouse.y)
-        let session = DragSession(
+        var session = DragSession(
             changeCount: -1,
             filePaths: paths,
             hasFilePromise: false,
             promisedTypeIdentifiers: [],
             location: point
         )
+        guard let chosen = nonEmptyKind(startingAt: kind, session: session) else { return }
+        let located = FinderIconLocator.locate(near: mouse, paths: paths)
+        let center = located.center ?? mouse
+        FinderIconLocator.log(located, mode: "click", mouse: mouse, paths: paths, center: center)
+        session.location = Point(x: center.x, y: center.y)
         clickMode = true
-        showWheel(kind: kind, at: point, session: session)
+        showWheel(kind: chosen, at: session.location, session: session)
     }
 
     private func endClickMode() {
@@ -250,6 +255,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self.acceptDrop(index: index)
             self.clickMode = false
             self.session = nil
+        }
+        wheel.onMissClick = { [weak self] in
+            guard let self, self.clickMode else { return }
+            self.endClickMode()
         }
     }
 
@@ -294,18 +303,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } as Any)
     }
 
-    private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
+    /// Kinds with no segments are skipped. Nil means every kind is empty.
+    private func nonEmptyKind(startingAt kind: WheelKind, session: DragSession) -> WheelKind? {
         model.refreshTools()
+        return WheelCycle.firstNonEmpty(startingAt: kind) { candidate in
+            !WheelContents.build(kind: candidate, session: session, availability: model.tools).segments.isEmpty
+        }
+    }
+
+    private func showWheel(kind: WheelKind, at point: Point?, session: DragSession) {
         pushSettings()
-        self.kind = kind
+        guard let chosen = nonEmptyKind(startingAt: kind, session: session) else {
+            drag.machine.adoptShownWheel(nil, session: session)
+            if wheel.isShowing || clickMode {
+                clickMode = false
+                self.session = nil
+                dismissWheel()
+            }
+            return
+        }
+        drag.machine.adoptShownWheel(chosen, session: session)
+        self.kind = chosen
         self.session = session
-        let built = WheelContents.build(kind: kind, session: session, availability: model.tools)
+        let built = WheelContents.build(kind: chosen, session: session, availability: model.tools)
         self.built = built
         navigation = WheelNavigation(count: built.segments.count)
         let apply = { [wheel] in
             wheel.model.segments = built.segments
             wheel.model.highlighted = nil
-            wheel.model.centerText = built.segments.isEmpty ? "NOTHING" : built.centerFallback
+            wheel.model.centerText = built.centerFallback
         }
         if wheel.isShowing {
             // Cycling wheels in place: the old ring spins out and the next one settles in.
@@ -316,11 +342,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         } else {
             apply()
         }
+        let paths = session.filePaths
         if let point {
-            wheel.present(at: CGPoint(x: point.x, y: point.y))
+            let screen = CGPoint(x: point.x, y: point.y)
+            let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? screen
+            // A drag wheel stays invisible until the icon center is known, so it
+            // does not flash on the pointer and then jump. Click mode already
+            // resolved the icon before this call.
+            wheel.present(at: screen, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: paths)
         } else if !wheel.isShowing {
             let mouse = NSEvent.mouseLocation
-            wheel.present(at: mouse)
+            let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? mouse
+            wheel.present(at: mouse, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: paths)
         }
     }
 
@@ -429,12 +462,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             settingsWindow.makeKeyAndOrderFront(nil)
             return
         }
-        // The window takes the SwiftUI form's own size, so there's no dead margin around it.
         let host = NSHostingController(rootView: SettingsView(model: model))
-        let window = NSWindow(contentViewController: host)
-        window.styleMask = [.titled, .closable, .miniaturizable]
-        window.title = "Pith Settings"
-        window.isReleasedWhenClosed = false
+        let window = PithWindowFactory.makeSettings(contentController: host)
         window.setContentSize(host.view.fittingSize)
         window.center()
         window.makeKeyAndOrderFront(nil)
@@ -448,24 +477,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             box.window = nil
             self?.onboardingWindow = nil
         }
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 460, height: 280),
-            styleMask: [.titled, .closable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "Pith"
-        window.titlebarAppearsTransparent = true
-        window.isReleasedWhenClosed = false
-        window.backgroundColor = NSColor(calibratedRed: 1, green: 0.78, blue: 0.62, alpha: 1)
-        window.contentView = NSHostingView(rootView: OnboardingView(
+        let window = PithWindowFactory.makeOnboarding(content: PithHostingView(rootView: OnboardingView(
             onGrant: {
                 _ = AccessibilityPermission.isTrusted(prompt: true)
                 close()
             },
             onLater: close
-        ))
-        window.center()
+        )))
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
         box.window = window
@@ -693,52 +711,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 private final class WindowBox {
     var window: NSWindow?
-}
-
-private struct MissingImageNote: View {
-    var name: String
-    var onClose: () -> Void
-
-    var body: some View {
-        VStack(spacing: 16) {
-            Text("Couldn't open \(name)")
-                .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(PithTheme.ink)
-            Button("Close", action: onClose)
-                .buttonStyle(PithPrimaryButtonStyle())
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(PithTheme.windowWash.opacity(0.35))
-    }
-}
-
-struct OnboardingView: View {
-    var onGrant: () -> Void
-    var onLater: () -> Void
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Pith watches the drag")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundStyle(PithTheme.ink)
-            Text("Drag a file from Finder, then tap Shift. A wheel appears under the pointer. Tap Shift again to cycle through Tools and Actions, then back to Convert. Drop on a segment and the converted file lands next to the source. Escape dismisses the wheel.")
-                .font(.system(size: 13))
-                .foregroundStyle(PithTheme.ink.opacity(0.82))
-                .fixedSize(horizontal: false, vertical: true)
-            Text("macOS has to list Pith under Privacy & Security → Accessibility. Finder owns the drag; Pith only sees the tap and the drag pasteboard once that permission is on.")
-                .font(.system(size: 13))
-                .foregroundStyle(PithTheme.ink.opacity(0.7))
-                .fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Later", action: onLater)
-                    .buttonStyle(PithQuietButtonStyle())
-                Spacer()
-                Button("Grant Access", action: onGrant)
-                    .buttonStyle(PithPrimaryButtonStyle())
-            }
-            .padding(.top, 6)
-        }
-        .padding(24)
-        .frame(width: 460)
-    }
 }

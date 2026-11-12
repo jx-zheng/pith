@@ -103,6 +103,20 @@ final class GestureEdgeCaseTests: XCTestCase {
         XCTAssertEqual(WheelKind.actions.next, .convert)
     }
 
+    func testFirstNonEmptyKindSkipsEmptyWheels() {
+        let all: (WheelKind) -> Bool = { _ in true }
+        XCTAssertEqual(WheelCycle.firstNonEmpty(startingAt: .convert, hasSegments: all), .convert)
+
+        let convertEmpty: (WheelKind) -> Bool = { $0 != .convert }
+        XCTAssertEqual(WheelCycle.firstNonEmpty(startingAt: .convert, hasSegments: convertEmpty), .tools)
+
+        let none: (WheelKind) -> Bool = { _ in false }
+        XCTAssertNil(WheelCycle.firstNonEmpty(startingAt: .convert, hasSegments: none))
+
+        let onlyTools: (WheelKind) -> Bool = { $0 == .tools }
+        XCTAssertEqual(WheelCycle.firstNonEmpty(startingAt: .actions, hasSegments: onlyTools), .tools)
+    }
+
     func testLegacyKeyBindingsDecodeLeniently() throws {
         let partial = #"{"convert":"command","tools":"not-a-key","tapMaxDuration":0.22}"#
         let bindings = try JSONDecoder().decode(KeyBindings.self, from: Data(partial.utf8))

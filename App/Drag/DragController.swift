@@ -20,6 +20,8 @@ final class DragController {
 
     private var monitors: [Any] = []
     private var lastPromiseChangeCount: Int?
+    /// Where the file drag began. The wheel uses this when the drag image has no icon piece.
+    private(set) var fileDragOrigin: Point?
     /// Last drag-pasteboard read. URLs are refreshed only when `changeCount` moves.
     private var cached = DragPasteboardSnapshot(changeCount: 0, filePaths: [], hasFilePromise: false, promisedTypeIdentifiers: [])
 
@@ -80,11 +82,12 @@ final class DragController {
             case .dismissWheel:
                 onDismissWheel?()
             case .dragEnded:
+                fileDragOrigin = nil
                 onDragEnded?()
             case let .wheelKey(key):
                 onWheelKey?(key)
-            case .dragBegan:
-                break
+            case let .dragBegan(session):
+                fileDragOrigin = session.location
             case let .idleTap(kind):
                 onIdleTap?(kind)
             }

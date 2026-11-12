@@ -52,6 +52,19 @@ public enum WheelKind: String, Codable, Sendable, Equatable, CaseIterable {
     }
 }
 
+/// Which wheel to show. Empty kinds are skipped. The walk starts at `start`
+/// and follows `next`, and each kind is visited once.
+public enum WheelCycle {
+    public static func firstNonEmpty(startingAt start: WheelKind, hasSegments: (WheelKind) -> Bool) -> WheelKind? {
+        var kind = start
+        for _ in 0..<WheelKind.allCases.count {
+            if hasSegments(kind) { return kind }
+            kind = kind.next
+        }
+        return nil
+    }
+}
+
 public struct KeyBindings: Equatable, Sendable, Codable {
     public var convert: TriggerKey
     public var tools: TriggerKey

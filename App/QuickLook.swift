@@ -20,17 +20,7 @@ final class QuickLookPresenter: NSObject, QLPreviewPanelDataSource, QLPreviewPan
             return
         }
         items = urls
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 8, height: 8),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
-        )
-        window.isOpaque = false
-        window.backgroundColor = .clear
-        window.level = .floating
-        window.collectionBehavior = [.canJoinAllSpaces, .transient]
-        window.isReleasedWhenClosed = false
+        let window = PithWindowFactory.makeQuickLookHost()
         let host = QuickLookHostView(frame: NSRect(x: 0, y: 0, width: 8, height: 8))
         host.presenter = self
         window.contentView = host

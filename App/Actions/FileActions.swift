@@ -37,6 +37,7 @@ enum FileActions {
     private static func move(_ urls: [URL]) {
         NSApp.activate()
         let panel = NSOpenPanel()
+        PithWindowFactory.configureChooser(panel)
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true

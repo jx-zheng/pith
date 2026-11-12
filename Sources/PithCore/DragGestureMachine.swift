@@ -188,6 +188,17 @@ public struct DragGestureMachine: Equatable {
         }
     }
 
+    /// The app shows a different kind than the one this tap named, or no wheel at all.
+    /// A drag that produced no wheel goes back to dragging, so the next Shift and the drop still run.
+    public mutating func adoptShownWheel(_ kind: WheelKind?, session: DragSession) {
+        switch phase {
+        case .wheel, .dragging:
+            phase = kind.map { .wheel(session, $0) } ?? .dragging(session)
+        case .idle, .pressed, .nonFileDrag:
+            break
+        }
+    }
+
     private mutating func dismissWheelOnly() -> [GestureEffect] {
         guard case let .wheel(session, _) = phase else { return [] }
         phase = .dragging(session)
