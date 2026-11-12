@@ -178,32 +178,22 @@ final class WindowDragTests: XCTestCase {
         XCTAssertNotEqual(window.frame.origin, before, "\(name): title drag did not move the window")
     }
 
-    /// Hit-testing the header returns the drag strip. The mouse-down, drag, and
-    /// mouse-up are posted before the run loop so `performDrag` (started from that
-    /// mouse-down) consumes them instead of waiting on a cursor that never moves.
+    /// `sendEvent` hit-tests to the strip, whose `mouseDown` calls `performDrag`.
+    /// The drag and mouse-up are posted from a timer in the tracking run-loop mode,
+    /// which is the mode `performDrag` is waiting in.
     private func sendHeaderDrag(window: NSWindow, from start: NSPoint, to end: NSPoint) {
-        let startCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: start))
-        let endCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: end))
-        func post(_ type: CGEventType, _ point: CGPoint) {
-            let event = CGEvent(mouseEventSource: nil, mouseType: type, mouseCursorPosition: point, mouseButton: .left)
-            event?.post(tap: .cghidEventTap)
-            event?.post(tap: .cgSessionEventTap)
+        let timer = Timer(timeInterval: 0.05, repeats: false) { _ in
+            NSApp.postEvent(self.mouse(.leftMouseDragged, at: end, window: window), atStart: false)
+            NSApp.postEvent(self.mouse(.leftMouseUp, at: end, window: window), atStart: false)
         }
-        let before = window.frame.origin
-        CGWarpMouseCursorPosition(endCG)
-        NSApp.postEvent(mouse(.leftMouseDown, at: start, window: window), atStart: false)
-        NSApp.postEvent(mouse(.leftMouseDragged, at: end, window: window), atStart: false)
-        NSApp.postEvent(mouse(.leftMouseUp, at: end, window: window), atStart: false)
-        post(.leftMouseDown, startCG)
-        post(.leftMouseDragged, endCG)
-        post(.leftMouseUp, endCG)
-        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-        guard window.frame.origin == before else { return }
-        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
-            post(.leftMouseDragged, endCG)
-            post(.leftMouseUp, endCG)
+        RunLoop.current.add(timer, forMode: .eventTracking)
+        RunLoop.current.add(timer, forMode: .common)
+        let endCG = Self.cgPoint(fromAppKit: window.convertPoint(toScreen: end))
+        DispatchQueue.global().asyncAfter(deadline: .now() + 1.0) {
+            CGEvent(mouseEventSource: nil, mouseType: .leftMouseUp, mouseCursorPosition: endCG, mouseButton: .left)?.post(tap: .cgSessionEventTap)
         }
         window.sendEvent(mouse(.leftMouseDown, at: start, window: window))
+        timer.invalidate()
     }
 
     private func isDragStrip(_ view: NSView?) -> Bool {

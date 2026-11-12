@@ -34,6 +34,10 @@ final class TitleBarDragView: NSView {
 /// title strip never reaches `TitleBarDragView`.
 final class PithHostingView<Content: View>: NSHostingView<Content> {
     override func hitTest(_ point: NSPoint) -> NSView? {
+        // The close control sits in front of the strip. SwiftUI handles that click.
+        if marker(in: self, point: point, identifier: "pith.close") != nil {
+            return super.hitTest(point)
+        }
         if let drag = dragView(in: self, point: point) {
             return drag
         }
@@ -48,6 +52,20 @@ final class PithHostingView<Content: View>: NSHostingView<Content> {
                 return nested
             }
             if subview is TitleBarDragView, subview.bounds.contains(local) {
+                return subview
+            }
+        }
+        return nil
+    }
+
+    private func marker(in view: NSView, point: NSPoint, identifier: String) -> NSView? {
+        for subview in view.subviews.reversed() {
+            guard !subview.isHidden else { continue }
+            let local = view.convert(point, to: subview)
+            if let nested = marker(in: subview, point: local, identifier: identifier) {
+                return nested
+            }
+            if subview.accessibilityIdentifier() == identifier, subview.bounds.contains(local) {
                 return subview
             }
         }
