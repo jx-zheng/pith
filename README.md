@@ -2,7 +2,7 @@
 
 Pith is a personal macOS menu-bar app. Drag a file, tap Shift, and a radial wheel appears under the pointer. Drop on a segment and the conversion is written next to the source.
 
-Interaction model: a glass donut wheel under the pointer, a red-orange hover wedge, a centre pill, a small progress HUD, and warm tool windows. The menu-bar glyph is a plain template donut. Finder uses a separate slate squircle with a picture plate, from `App/Assets.xcassets`.
+Interaction model: a glass donut wheel under the pointer, a red-orange hover wedge, a centre pill, a small progress HUD, and warm tool windows. The menu-bar glyph is a plain template donut. Finder uses the Citrus pith icon from `App/Assets.xcassets`: a cream slice on a warm orange squircle. The 16 px and 32 px images use four wedges so the slice stays readable; from 64 px up it is the full six-wedge mark.
 
 Bundle id: `com.kevinzheng.pith`. Deployment target: macOS 14. The app is not sandboxed and is not distributed through the App Store.
 
@@ -141,7 +141,7 @@ project.yml                XcodeGen. Run xcodegen generate. The xcodeproj is git
 Sources/PithCore/          gestures, file types, offers, ffmpeg/pandoc/soffice argv, naming
 Tests/PithCoreTests/
 App/PithMain.swift         menu-bar entry, wiring
-App/Assets.xcassets/       macOS AppIcon (824 squircle on a 1024 canvas, all sizes)
+App/Assets.xcassets/       Citrus pith AppIcon. Regenerate with scripts/make_app_icon.py
 App/UI/Theme.swift         design tokens
 App/UI/WheelView.swift     donut
 App/UI/WheelPanel.swift    panel and drop destination
