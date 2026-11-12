@@ -117,6 +117,49 @@ final class IconRingGeometryTests: XCTestCase {
         XCTAssertEqual(fresh.canCommit(segment: 0), 0)
     }
 
+    func testIconPieceCoveringTheWholeDragFrameIsRejected() {
+        let frame = RingRect(x: 400, y: 500, width: 96, height: 120)
+        let covering = RingRect(x: 0, y: 0, width: 96, height: 120)
+        XCTAssertNil(IconRingGeometry.dragIcon(draggingFrame: frame, iconComponent: covering))
+        let wide = RingRect(x: 4, y: 4, width: 88, height: 24)
+        XCTAssertNil(IconRingGeometry.dragIcon(draggingFrame: frame, iconComponent: wide), "a label-shaped piece is not the icon")
+        let piece = RingRect(x: 16, y: 48, width: 64, height: 64)
+        XCTAssertEqual(
+            IconRingGeometry.dragIcon(draggingFrame: frame, iconComponent: piece),
+            RingRect(x: 416, y: 548, width: 64, height: 64)
+        )
+        // The rejected piece is not a center, so the next anchor is logged.
+        let pointer = Point(x: 430, y: 520)
+        let choice = IconRingGeometry.choose(dragImageCenter: nil, accessibilityCenter: nil, pointer: pointer)
+        XCTAssertEqual(choice.source, .pointer)
+        XCTAssertEqual(choice.center, pointer)
+        print(IconRingGeometry.logLine(source: choice.source, center: choice.center, pointer: pointer))
+    }
+
+    func testAccessibilityCenterFarFromThePointerUsesThePointer() {
+        let pointer = Point(x: 200, y: 300)
+        let radius = 200.0
+        let onWheel = Point(x: 200, y: 300 + radius)
+        let pastWheel = Point(x: 200, y: 300 + radius + 1)
+        XCTAssertEqual(IconRingGeometry.accessibilityCenter(onWheel, pointer: pointer, radius: radius), onWheel)
+        XCTAssertNil(IconRingGeometry.accessibilityCenter(pastWheel, pointer: pointer, radius: radius))
+        let kept = IconRingGeometry.choose(
+            dragImageCenter: nil,
+            accessibilityCenter: IconRingGeometry.accessibilityCenter(onWheel, pointer: pointer, radius: radius),
+            pointer: pointer
+        )
+        let dropped = IconRingGeometry.choose(
+            dragImageCenter: nil,
+            accessibilityCenter: IconRingGeometry.accessibilityCenter(pastWheel, pointer: pointer, radius: radius),
+            pointer: pointer
+        )
+        XCTAssertEqual(kept.source, .accessibility)
+        XCTAssertEqual(kept.center, onWheel)
+        XCTAssertEqual(dropped.source, .pointer)
+        XCTAssertEqual(dropped.center, pointer)
+        print(IconRingGeometry.logLine(source: dropped.source, center: dropped.center, pointer: pointer))
+    }
+
     func testDragImageIconIsNotTheDragImageCenter() {
         // Drag image is the cell (icon + label). Label hangs below the icon in y-up space,
         // so the icon component sits in the upper part of the dragging frame.

@@ -11,19 +11,26 @@ import PithCore
 /// one was used.
 enum DraggedIconRing {
     static func placement(of sender: NSDraggingInfo, mouse: CGPoint, dragOrigin: CGPoint, paths: [String]) -> (center: CGPoint, source: RingAnchorSource) {
+        let pointer = Point(x: Double(mouse.x), y: Double(mouse.y))
         let dragImage = iconCenter(of: sender, mouse: mouse)
-        let accessibility = dragImage == nil
+        let found = dragImage == nil
             ? FinderIconLocator.iconCenter(near: dragOrigin, paths: paths)
             : nil
+        // A Finder hit on another row is farther than the wheel. Keep the pointer.
+        let accessibility = IconRingGeometry.accessibilityCenter(
+            found.map { Point(x: Double($0.x), y: Double($0.y)) },
+            pointer: pointer,
+            radius: Double(PithTheme.outerRadius)
+        )
         let choice = IconRingGeometry.choose(
             dragImageCenter: dragImage.map { Point(x: Double($0.x), y: Double($0.y)) },
-            accessibilityCenter: accessibility.map { Point(x: Double($0.x), y: Double($0.y)) },
-            pointer: Point(x: Double(mouse.x), y: Double(mouse.y))
+            accessibilityCenter: accessibility,
+            pointer: pointer
         )
         let line = IconRingGeometry.logLine(
             source: choice.source,
             center: choice.center,
-            pointer: Point(x: Double(mouse.x), y: Double(mouse.y))
+            pointer: pointer
         )
         NSLog("%@", line as NSString)
         return (CGPoint(x: choice.center.x, y: choice.center.y), choice.source)
@@ -42,8 +49,8 @@ enum DraggedIconRing {
             let frame = RingRect(item.draggingFrame)
             guard let icon = item.imageComponents?.first(where: { $0.key == .icon }) else { return }
             let piece = RingRect(icon.frame)
-            guard piece.width > 1, piece.height > 1 else { return }
-            let placed = IconRingGeometry.placedIcon(draggingFrame: frame, iconComponent: piece)
+            // A full-frame or non-square ".icon" piece is the cell, not the bitmap.
+            guard let placed = IconRingGeometry.dragIcon(draggingFrame: frame, iconComponent: piece) else { return }
             let pointer = Point(x: Double(mouse.x), y: Double(mouse.y))
             guard IconRingGeometry.contains(frame, point: pointer) || IconRingGeometry.contains(placed, point: pointer) else { return }
             let center = IconRingGeometry.center(of: placed)

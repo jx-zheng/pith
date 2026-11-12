@@ -20,7 +20,6 @@ enum FinderIconLocator {
         let axY = IconRingGeometry.topLeftY(fromAppKitY: Double(mouse.y), mainScreenMaxY: maxY)
         let system = AXUIElementCreateSystemWide()
         let deadline = Date().addingTimeInterval(budget)
-        AXUIElementSetMessagingTimeout(system, Float(budget))
         var hit: AXUIElement?
         let status = AXUIElementCopyElementAtPosition(system, Float(mouse.x), Float(axY), &hit)
         guard status == .success, let hit else { return nil }
@@ -28,6 +27,8 @@ enum FinderIconLocator {
         AXUIElementGetPid(hit, &pid)
         guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
             .contains(where: { $0.processIdentifier == pid }) else { return nil }
+        let finder = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(finder, Float(budget))
 
         let pointer = Point(x: Double(mouse.x), y: axY)
         guard let match = resolve(startingAt: hit, pointer: pointer, paths: paths, deadline: deadline) else { return nil }
@@ -53,8 +54,11 @@ enum FinderIconLocator {
                 if role(of: node) == imageRole, let own = frame(of: node) {
                     images.append(own)
                 }
-                for child in children(of: node) {
-                    collectImages(child, into: &images, depth: 0)
+                if Date() < deadline {
+                    for child in children(of: node) {
+                        guard Date() < deadline else { break }
+                        collectImages(child, into: &images, depth: 0, deadline: deadline)
+                    }
                 }
                 if let icon = IconRingGeometry.iconImage(inside: cell, images: images),
                    accepts(node, paths: paths) {
@@ -95,13 +99,15 @@ enum FinderIconLocator {
         "AXBrowser"
     ]
 
-    private static func collectImages(_ element: AXUIElement, into images: inout [RingRect], depth: Int) {
-        guard depth < 4 else { return }
+    private static func collectImages(_ element: AXUIElement, into images: inout [RingRect], depth: Int, deadline: Date) {
+        guard depth < 4, Date() < deadline else { return }
         if role(of: element) == imageRole, let rect = frame(of: element) {
             images.append(rect)
         }
+        guard Date() < deadline else { return }
         for child in children(of: element) {
-            collectImages(child, into: &images, depth: depth + 1)
+            guard Date() < deadline else { return }
+            collectImages(child, into: &images, depth: depth + 1, deadline: deadline)
         }
     }
 

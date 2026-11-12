@@ -67,6 +67,28 @@ public enum IconRingGeometry {
         )
     }
 
+    /// The drag image's icon piece, or nil when that piece is the whole frame
+    /// or is not a roughly square bitmap.
+    ///
+    /// A piece the size of `draggingFrame` is the cell (icon, label, and padding).
+    /// The same rule as `iconImage(inside:images:)` rejects it: strictly smaller
+    /// than the frame, and square within 15%. The caller then uses the next anchor.
+    public static func dragIcon(draggingFrame: RingRect, iconComponent: RingRect) -> RingRect? {
+        let placed = placedIcon(draggingFrame: draggingFrame, iconComponent: iconComponent)
+        guard let icon = iconImage(inside: draggingFrame, images: [placed]), isIconShaped(icon) else { return nil }
+        return icon
+    }
+
+    /// The Finder icon center when it is within `radius` of the pointer.
+    /// A center farther away is a different row, so the caller keeps the pointer.
+    public static func accessibilityCenter(_ center: Point?, pointer: Point, radius: Double) -> Point? {
+        guard let center, radius >= 0 else { return nil }
+        let dx = center.x - pointer.x
+        let dy = center.y - pointer.y
+        guard dx * dx + dy * dy <= radius * radius else { return nil }
+        return center
+    }
+
     /// Which measurement produced the ring center. Drag-image bounds win, then the
     /// Finder icon under the drag origin, then the pointer.
     public static func choose(dragImageCenter: Point?, accessibilityCenter: Point?, pointer: Point) -> (center: Point, source: RingAnchorSource) {

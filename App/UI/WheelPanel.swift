@@ -63,12 +63,9 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         }
         panel.orderFrontRegardless()
         isShowing = true
-        if hiddenUntilAligned {
-            DispatchQueue.main.async { [weak self] in
-                guard let self, self.panel.alphaValue == 0 else { return }
-                self.panel.alphaValue = 1
-            }
-        }
+        // A drag wheel stays at alpha 0 until `alignRingToDraggedIcon` has moved
+        // it onto the icon. Showing it here would put the ring on the pointer
+        // and then jump.
     }
 
     func dismiss() {

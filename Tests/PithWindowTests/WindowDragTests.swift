@@ -9,8 +9,14 @@ final class WindowDragTests: XCTestCase {
 
     override func setUp() {
         super.setUp()
+        TitleBarDragView.followsQueuedEventsForTesting = true
         let app = NSApplication.shared
         app.setActivationPolicy(.accessory)
+    }
+
+    override func tearDown() {
+        TitleBarDragView.followsQueuedEventsForTesting = false
+        super.tearDown()
     }
 
     func testEditorWindowsDragByTheTitleStrip() {
@@ -174,8 +180,10 @@ final class WindowDragTests: XCTestCase {
         let end = NSPoint(x: inWindow.x + delta.x, y: inWindow.y + delta.y)
         let before = window.frame.origin
         sendHeaderDrag(window: window, from: inWindow, to: end)
-        log(name: name, before: before, after: window.frame.origin)
-        XCTAssertNotEqual(window.frame.origin, before, "\(name): title drag did not move the window")
+        let after = window.frame.origin
+        log(name: name, before: before, after: after)
+        XCTAssertEqual(after.x - before.x, delta.x, accuracy: 0.5, "\(name): dx")
+        XCTAssertEqual(after.y - before.y, delta.y, accuracy: 0.5, "\(name): dy")
     }
 
     /// `sendEvent` hit-tests to the strip. The drag and mouse-up are already queued,

@@ -6,10 +6,15 @@ import SwiftUI
 /// Glass editors use a hidden, transparent title bar (`fullSizeContentView`) and
 /// the SwiftUI content covers it, so AppKit never sees a title-bar drag. The
 /// progress card is borderless. This view is the title region: `mouseDown`
-/// tracks the pointer and moves the window by that delta. Canvas clicks stay
-/// on the views above it, because `isMovableByWindowBackground` stays off.
+/// calls `performDrag` and returns. Canvas clicks stay on the views above it,
+/// because `isMovableByWindowBackground` stays off.
 final class TitleBarDragView: NSView {
     static let identifier = "pith.titleDrag"
+
+    /// Headless tests have no physical mouse button, so `performDrag` returns
+    /// immediately. The window-test suite turns this on and posts the drag
+    /// before the click. Real clicks leave it off and never poll the event queue.
+    static var followsQueuedEventsForTesting = false
 
     override var isOpaque: Bool { false }
     override var mouseDownCanMoveWindow: Bool { true }
@@ -26,19 +31,21 @@ final class TitleBarDragView: NSView {
 
     override func mouseDown(with event: NSEvent) {
         guard let window, window.isMovable else { return }
-        let origin = window.frame.origin
         window.performDrag(with: event)
-        // A real press moves the window above. performDrag returns immediately
-        // when no mouse button is down, which is every synthesized click, so
-        // the drag events queued for that click are applied here.
-        guard window.frame.origin == origin else { return }
-        let start = window.convertPoint(toScreen: event.locationInWindow)
+        // A real press is entirely `performDrag`. The branch below exists only
+        // for a synthesized click: no left button is down, and the test posted
+        // the drag events before `mouseDown`. A plain header click must not
+        // wait on the event queue.
+        guard Self.followsQueuedEventsForTesting, NSEvent.pressedMouseButtons & 1 == 0 else { return }
+        let origin = window.frame.origin
+        let start = event.locationInWindow
         let deadline = Date().addingTimeInterval(0.3)
         while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: deadline, inMode: .default, dequeue: true) {
-            let current = window.convertPoint(toScreen: next.locationInWindow)
+            // Window coordinates of the posted events. Do not convert through
+            // the window after it has moved; that counts the move twice.
             window.setFrameOrigin(NSPoint(
-                x: origin.x + current.x - start.x,
-                y: origin.y + current.y - start.y
+                x: origin.x + (next.locationInWindow.x - start.x),
+                y: origin.y + (next.locationInWindow.y - start.y)
             ))
             if next.type == .leftMouseUp { break }
         }
