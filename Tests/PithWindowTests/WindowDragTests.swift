@@ -190,6 +190,10 @@ final class WindowDragTests: XCTestCase {
     /// The strip follows them only when no left button is down.
     private func sendHeaderDrag(window: NSWindow, from start: NSPoint, to end: NSPoint) {
         TitleBarDragView.followsQueuedEventsForTesting = true
+        // The click itself is not queued, so its window location does not share
+        // the shift a titled or borderless window applies to posted events.
+        // The first drag is that same point, posted, and the second is the end.
+        NSApp.postEvent(mouse(.leftMouseDragged, at: start, window: window), atStart: false)
         NSApp.postEvent(mouse(.leftMouseDragged, at: end, window: window), atStart: false)
         NSApp.postEvent(mouse(.leftMouseUp, at: end, window: window), atStart: false)
         window.sendEvent(mouse(.leftMouseDown, at: start, window: window))

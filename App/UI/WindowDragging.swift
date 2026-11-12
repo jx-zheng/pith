@@ -32,23 +32,29 @@ final class TitleBarDragView: NSView {
     override func mouseDown(with event: NSEvent) {
         guard let window, window.isMovable else { return }
         let origin = window.frame.origin
-        let start = event.locationInWindow
         // Sampled before performDrag. A real press has the left button down, so
         // it only calls performDrag. performDrag ends on mouse-up, when the
         // button is already up; checking afterwards would miss that.
         let followQueue = Self.followsQueuedEventsForTesting && NSEvent.pressedMouseButtons & 1 == 0
         window.performDrag(with: event)
         guard followQueue else { return }
+        // Both points are queued window locations, so a title-bar or panel shift
+        // is in each of them and cancels. The frame is always the original origin
+        // plus that difference. mouseUp is not applied: its window location is
+        // read after the move and would put the window back.
+        var anchor: NSPoint?
         let deadline = Date().addingTimeInterval(0.3)
         while let next = NSApp.nextEvent(matching: [.leftMouseDragged, .leftMouseUp], until: deadline, inMode: .default, dequeue: true) {
-            // mouseUp's window location is read after the window has moved, so
-            // applying it cancels the drag. The dragged event still carries the
-            // original window location; the offset is from the original frame.
             if next.type == .leftMouseUp { break }
-            window.setFrameOrigin(NSPoint(
-                x: origin.x + (next.locationInWindow.x - start.x),
-                y: origin.y + (next.locationInWindow.y - start.y)
-            ))
+            let here = next.locationInWindow
+            if let anchor {
+                window.setFrameOrigin(NSPoint(
+                    x: origin.x + (here.x - anchor.x),
+                    y: origin.y + (here.y - anchor.y)
+                ))
+            } else {
+                anchor = here
+            }
         }
     }
 }
