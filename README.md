@@ -115,8 +115,9 @@ All sampled colour, type, and wheel geometry live in `App/UI/Theme.swift`.
 - Wheel diameter 400 pt, inner radius 0.40 of the outer, gap 6.5°, corner radius 18.
 - Highlight `#EB4420` (235, 68, 32). Cream glass tint `(1.00, 0.86, 0.68)` over an `NSVisualEffectView` (`.popover` for the wheel, `.hudWindow` for the progress card).
 - Format labels are uppercase, bold, tracked. Tool labels sit under an SF Symbol.
-- Appear animation: scale 0.84 → 1 and fade, spring response 0.32, damping 0.74.
-- Shift cycle: the open ring turns clockwise and fades while the next ring settles in from the other direction (spring response 0.46, damping 0.78).
+- The ring is drawn at full opacity on the frame after Shift is released. There is no intro animation.
+- Shift cycle swaps the wedges in place on that same frame.
+- Clicking away, Escape, and the other non-action dismisses fade and scale the ring down over 120ms (ease-out). A fallback orders the panel out at 150ms. A wedge click or drop closes immediately, with no fade. Shift during the fade restores the same panel at full opacity.
 - Format wheel for a PDF, clockwise from 12 o'clock: DOCX, JPG, PNG, TXT. The centre pill shows the hovered label, or the file size (`1.2 MB`) when nothing is hovered.
 - Image wheel, clockwise from 12: PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF, GIF.
 - Tool wheel, clockwise from 12: COMPRESS, METADATA, EDIT, ANNOTATE, ADD BG, CROP, REDACT.

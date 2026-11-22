@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import PithCore
 
@@ -9,20 +10,22 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     private let panel: NSPanel
     private let dropView: WheelDropView
     private(set) var isShowing = false
-    /// Set once the ring has been placed for this presentation.
-    private var alignedToIcon = false
+    /// True from the moment a non-action dismiss starts until the panel is ordered out or restored.
+    private(set) var isClosing = false
+    /// Set once the drag-image icon has been applied for this presentation.
+    private var appliedDragImage = false
     /// The pointer where the wheel appeared. A drop waits until it moves, or until a later entry.
     private var hover = RingHoverGate()
     private var anchorMouse = Point.zero
     private var sawInitialDragEntry = false
-    private var dragOrigin = CGPoint.zero
-    private var dragPaths: [String] = []
     var onDropIndex: ((Int) -> Void)?
     var onHoverIndex: ((Int?) -> Void)?
     /// Click-select mode: a segment was clicked.
     var onClickIndex: ((Int) -> Void)?
     /// Click-select mode: the centre, a gap, a corner, or a wedge with no action.
     var onMissClick: (() -> Void)?
+    /// Drag-image icon center, in screen coordinates. No accessibility lookup.
+    var onDragImageCenter: ((CGPoint) -> Void)?
 
     override init() {
         let side = PithTheme.wheelDiameter + PithTheme.panelPadding
@@ -47,34 +50,134 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
 
-    /// `hiddenUntilAligned` keeps a drag wheel invisible until the icon center is known,
-    /// so it does not appear on the pointer and then jump.
-    func present(at screenPoint: CGPoint, hiddenUntilAligned: Bool, dragOrigin: CGPoint, paths: [String]) {
-        alignedToIcon = false
+    /// Draws the ring at `screenPoint` on this turn. Full opacity, no intro animation.
+    func present(at screenPoint: CGPoint, dragOrigin: CGPoint, paths: [String]) {
+        _ = (dragOrigin, paths)
+        appliedDragImage = false
         hover = RingHoverGate()
         sawInitialDragEntry = false
         anchorMouse = Point(x: Double(NSEvent.mouseLocation.x), y: Double(NSEvent.mouseLocation.y))
-        self.dragOrigin = dragOrigin
-        dragPaths = paths
         model.highlighted = nil
-        panel.alphaValue = hiddenUntilAligned ? 0 : 1
+        model.appeared = true
+        restoreInteractive()
         moveRing(to: screenPoint)
-        if !isShowing {
-            model.appeared = false
-            model.replay += 1
-        }
         panel.orderFrontRegardless()
         isShowing = true
-        // A drag wheel stays at alpha 0 until `alignRingToDraggedIcon` has moved
-        // it onto the icon. Showing it here would put the ring on the pointer
-        // and then jump.
     }
 
-    func dismiss() {
-        guard isShowing else { return }
+    /// Orders the panel out. Alpha is restored only after it is off screen, so a fade
+    /// cannot flash back to full opacity on the way out.
+    func orderOutNow() {
+        isClosing = false
+        panel.ignoresMouseEvents = false
         isShowing = false
         model.highlighted = nil
         panel.orderOut(nil)
+        if let layer = panel.contentView?.layer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.removeAnimation(forKey: "pith-close-fade")
+            layer.removeAnimation(forKey: "pith-close-scale")
+            layer.opacity = 1
+            layer.transform = CATransform3DIdentity
+            CATransaction.commit()
+        }
+        panel.alphaValue = 1
+    }
+
+    /// Stops taking clicks immediately, then fades and scales down.
+    /// The opacity animation is on the content layer so cancelling it cannot
+    /// leave `animator()` writing alpha 0 over a reopened ring.
+    func beginCloseAnimation(duration: TimeInterval, completion: @escaping () -> Void) {
+        guard isShowing, !isClosing else { return }
+        isClosing = true
+        panel.ignoresMouseEvents = true
+        guard let layer = closeLayer() else {
+            completion()
+            return
+        }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.fromValue = 1
+        fade.toValue = 0
+        fade.duration = duration
+        fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        fade.fillMode = .forwards
+        fade.isRemovedOnCompletion = false
+        let scale = CABasicAnimation(keyPath: "transform")
+        scale.fromValue = CATransform3DIdentity
+        scale.toValue = CATransform3DMakeScale(0.94, 0.94, 1)
+        scale.duration = duration
+        scale.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        scale.fillMode = .forwards
+        scale.isRemovedOnCompletion = false
+        layer.add(fade, forKey: "pith-close-fade")
+        layer.add(scale, forKey: "pith-close-scale")
+        // The model values stay at full opacity. `fillMode = .forwards` holds the
+        // faded presentation, and removing the animations (a Shift reopen) snaps back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + duration) {
+            completion()
+        }
+    }
+
+    /// Drops the fade. The panel is full opacity and accepts clicks again.
+    func restoreInteractive() {
+        isClosing = false
+        panel.ignoresMouseEvents = false
+        panel.alphaValue = 1
+        guard let layer = panel.contentView?.layer else { return }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer.removeAnimation(forKey: "pith-close-fade")
+        layer.removeAnimation(forKey: "pith-close-scale")
+        layer.opacity = 1
+        layer.transform = CATransform3DIdentity
+        CATransaction.commit()
+    }
+
+    private func closeLayer() -> CALayer? {
+        panel.contentView?.wantsLayer = true
+        panel.contentView?.subviews.forEach { $0.wantsLayer = true }
+        return panel.contentView?.layer
+    }
+
+    func move(to screenPoint: CGPoint) {
+        moveRing(to: screenPoint)
+    }
+
+    func commitFrame() {
+        panel.layoutSubtreeIfNeeded()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+        CATransaction.flush()
+    }
+
+    /// Warms the window server and the SwiftUI host without a visible flash.
+    func prewarm() {
+        model.appeared = true
+        let saved = panel.frame.origin
+        panel.alphaValue = 0
+        panel.ignoresMouseEvents = true
+        panel.setFrameOrigin(NSPoint(x: -8000, y: -8000))
+        panel.orderFrontRegardless()
+        panel.layoutSubtreeIfNeeded()
+        panel.displayIfNeeded()
+        CATransaction.flush()
+        panel.orderOut(nil)
+        panel.alphaValue = 1
+        panel.ignoresMouseEvents = false
+        panel.setFrameOrigin(saved)
+        isShowing = false
+        isClosing = false
+    }
+
+    func panelFrameContains(_ screenPoint: CGPoint) -> Bool {
+        panel.frame.contains(screenPoint)
+    }
+
+    func actionableWedge(atScreen screenPoint: CGPoint) -> Bool {
+        let windowPoint = dropView.convert(panel.convertPoint(fromScreen: screenPoint), from: nil)
+        guard let index = highlight(at: windowPoint) else { return false }
+        return model.segments.indices.contains(index) && model.segments[index].enabled
     }
 
     func highlight(at windowPoint: NSPoint) -> Int? {
@@ -106,15 +209,13 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         return draggingUpdated(sender)
     }
 
-    /// Places the ring once, then reveals it. A valid drag-image icon wins.
-    /// Otherwise the ring sits at `pointer + (icon at the grab - grab)`. The log names the source.
+    /// Local drag-image icon only. Accessibility lookup stays off this path.
     private func alignRingToDraggedIcon(_ sender: NSDraggingInfo) {
-        guard !alignedToIcon else { return }
-        alignedToIcon = true
+        guard !appliedDragImage, !isClosing else { return }
         let mouse = NSEvent.mouseLocation
-        let center = DraggedIconRing.placement(of: sender, mouse: mouse, dragOrigin: dragOrigin, paths: dragPaths)
-        moveRing(to: center)
-        panel.alphaValue = 1
+        guard let image = DraggedIconRing.iconPiece(of: sender, mouse: mouse) else { return }
+        appliedDragImage = true
+        onDragImageCenter?(CGPoint(x: image.center.x, y: image.center.y))
     }
 
     private func moveRing(to screenPoint: CGPoint) {
@@ -166,6 +267,7 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
 
     /// Click mode. A wedge with an action runs. Every other point in the panel closes the wheel.
     func clickDown(at windowPoint: NSPoint) {
+        guard !isClosing else { return }
         let index = highlight(at: windowPoint)
         let enabled = index.map { model.segments.indices.contains($0) && model.segments[$0].enabled } ?? false
         switch WheelClick.decide(index: index, enabled: enabled) {
@@ -184,6 +286,7 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool { true }
 
     func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard !isClosing else { return false }
         NSLog("Pith: performDragOperation at %@", NSStringFromPoint(sender.draggingLocation))
         let index = highlight(at: sender.draggingLocation)
         guard let index = hover.canCommit(segment: index),

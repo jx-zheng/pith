@@ -132,54 +132,8 @@ struct WheelContainer: View {
     @AppStorage(AccentTheme.defaultsKey) private var accentRaw = AccentTheme.tangerine.rawValue
 
     var body: some View {
-        ZStack {
-            WheelView(segments: model.segments, centerText: model.centerText, highlighted: model.highlighted)
-                .id(model.generation)
-                .transition(.asymmetric(
-                    insertion: .modifier(
-                        active: WheelSwitchEffect(scale: 0.82, angle: -42, opacity: 0, blur: 6),
-                        identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
-                    ),
-                    // No blur on the way out, so a fast run of Shift taps cannot stack fogged rings.
-                    removal: .modifier(
-                        active: WheelSwitchEffect(scale: 0.94, angle: 18, opacity: 0, blur: 0),
-                        identity: WheelSwitchEffect(scale: 1, angle: 0, opacity: 1, blur: 0)
-                    )
-                ))
-        }
-        .scaleEffect(model.appeared ? 1 : 0.84)
-        .opacity(model.appeared ? 1 : 0)
-        .onAppear { play() }
-        .onChange(of: model.replay) { _, _ in play() }
-        .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
-    }
-
-    private func play() {
-        model.appeared = false
-        DispatchQueue.main.async {
-            withAnimation(.spring(response: 0.32, dampingFraction: 0.74)) {
-                model.appeared = true
-            }
-        }
-    }
-}
-
-/// Scale, spin, fade and soften a whole wheel while Shift cycles to the next one.
-/// The outgoing ring turns clockwise and the incoming ring settles from the other side.
-/// `Equatable` is what `AnyTransition.modifier` requires. The effect is not `Animatable`,
-/// so blur is an in/out state rather than a per-frame filter.
-struct WheelSwitchEffect: ViewModifier, Equatable {
-    var scale: CGFloat
-    var angle: Double
-    var opacity: Double
-    var blur: CGFloat
-
-    func body(content: Content) -> some View {
-        content
-            .scaleEffect(scale)
-            .rotationEffect(.degrees(angle))
-            .blur(radius: blur)
-            .opacity(opacity)
+        WheelView(segments: model.segments, centerText: model.centerText, highlighted: model.highlighted)
+            .frame(width: PithTheme.wheelDiameter + PithTheme.panelPadding, height: PithTheme.wheelDiameter + PithTheme.panelPadding)
     }
 }
 

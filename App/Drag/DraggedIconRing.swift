@@ -98,7 +98,7 @@ enum DraggedIconRing {
 
     /// Screen center of a valid icon piece, or nil when the piece is missing,
     /// covers the whole drag frame, or is not on the pointer.
-    private static func iconPiece(of sender: NSDraggingInfo, mouse: CGPoint) -> (center: Point, rect: RingRect, cell: RingRect)? {
+    static func iconPiece(of sender: NSDraggingInfo, mouse: CGPoint) -> (center: Point, rect: RingRect, cell: RingRect)? {
         var found: (center: Point, rect: RingRect, cell: RingRect)?
         sender.enumerateDraggingItems(
             options: [],

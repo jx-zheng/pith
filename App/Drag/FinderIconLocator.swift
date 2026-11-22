@@ -17,39 +17,88 @@ struct LocatedIcon {
     var reason: String
 }
 
+struct FinderSnapshot {
+    var paths: [String]
+    var located: LocatedIcon
+}
+
 enum FinderIconLocator {
     /// The whole lookup, including every child query, stops after this.
     private static let budget: TimeInterval = 0.25
 
     static func locate(near mouse: CGPoint, paths: [String]) -> LocatedIcon {
+        guard let primary = NSScreen.screens.first else {
+            return LocatedIcon(center: nil, source: .pointer, filename: "", icon: nil, cell: nil, reason: "no-screen")
+        }
+        let pids = Set(
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").map(\.processIdentifier)
+        )
+        return snapshot(
+            near: mouse,
+            knownPaths: paths,
+            mainScreenMaxY: Double(primary.frame.maxY),
+            finderPIDs: pids
+        ).located
+    }
+
+    /// AX walk safe to run off the main thread. Screen geometry and Finder pids are
+    /// captured by the caller. `knownPaths` empty means "read the selection here".
+    static func snapshot(
+        near mouse: CGPoint,
+        knownPaths: [String],
+        mainScreenMaxY: Double,
+        finderPIDs: Set<pid_t>
+    ) -> FinderSnapshot {
         func miss(_ reason: String) -> LocatedIcon {
             LocatedIcon(center: nil, source: .pointer, filename: "", icon: nil, cell: nil, reason: reason)
         }
-        guard AccessibilityPermission.isTrusted(prompt: false) else { return miss("accessibility-off") }
-        guard let primary = NSScreen.screens.first else { return miss("no-screen") }
-        let maxY = Double(primary.frame.maxY)
+        guard AccessibilityPermission.isTrusted(prompt: false) else {
+            return FinderSnapshot(paths: knownPaths, located: miss("accessibility-off"))
+        }
+        let maxY = mainScreenMaxY
         let axY = IconRingGeometry.topLeftY(fromAppKitY: Double(mouse.y), mainScreenMaxY: maxY)
         let pointer = Point(x: Double(mouse.x), y: axY)
         let system = AXUIElementCreateSystemWide()
         let deadline = Date().addingTimeInterval(budget)
         var hit: AXUIElement?
         let status = AXUIElementCopyElementAtPosition(system, Float(mouse.x), Float(axY), &hit)
-        guard status == .success, let hit else { return miss("no-hit") }
+        guard status == .success, let hit else {
+            return FinderSnapshot(paths: knownPaths, located: miss("no-hit"))
+        }
         var pid: pid_t = 0
         AXUIElementGetPid(hit, &pid)
-        guard NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder")
-            .contains(where: { $0.processIdentifier == pid }) else { return miss("not-finder") }
+        guard finderPIDs.contains(pid) else {
+            return FinderSnapshot(paths: knownPaths, located: miss("not-finder"))
+        }
         let finder = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(finder, Float(budget))
 
         let root = window(above: hit, deadline: deadline) ?? hit
+        var elements: [AXUIElement] = []
+        collectSelected(in: root, into: &elements, depth: 0, deadline: deadline)
+        let discovered = selectionPaths(in: elements)
+        let paths = knownPaths.isEmpty ? discovered : knownPaths
+        guard !paths.isEmpty else {
+            return FinderSnapshot(paths: [], located: miss("no-paths"))
+        }
         if let located = selectedIcon(in: root, pointer: pointer, paths: paths, maxY: maxY, deadline: deadline) {
-            return located
+            return FinderSnapshot(paths: paths, located: located)
         }
         if let located = hitIcon(from: hit, pointer: pointer, paths: paths, maxY: maxY, deadline: deadline) {
-            return located
+            return FinderSnapshot(paths: paths, located: located)
         }
-        return miss("no-positive-match")
+        return FinderSnapshot(paths: paths, located: miss("no-positive-match"))
+    }
+
+    private static func selectionPaths(in elements: [AXUIElement]) -> [String] {
+        var paths: [String] = []
+        for element in elements {
+            guard let item = namedItem(element), let url = item.url else { continue }
+            let path = FinderIdentity.normalizedPath(url)
+            guard path.hasPrefix("/"), !paths.contains(path) else { continue }
+            paths.append(path)
+        }
+        return paths
     }
 
     static func log(_ located: LocatedIcon, mode: String, mouse: CGPoint, paths: [String], center: CGPoint) {

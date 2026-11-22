@@ -60,6 +60,17 @@ public enum GestureEffect: Equatable, Sendable {
     case wheelKey(MonitorKey)
     /// A trigger key was tapped while no drag is in progress (click-select mode).
     case idleTap(WheelKind)
+    /// Shift went down alone. The app may start an anchor lookup; this does not show the ring.
+    case prefetchAnchor
+}
+
+/// Why the gesture machine asked the ring to close. The app turns this into a
+/// `RingDismissMachine` event so a drop on a wedge still has its grace period.
+public enum GestureDismissCause: Equatable, Sendable {
+    case escape
+    case mouseUp
+    case mouseDown
+    case dropAccepted
 }
 
 public struct DragGestureMachine: Equatable {
@@ -80,13 +91,25 @@ public struct DragGestureMachine: Equatable {
         tap.maxDuration = bindings.tapMaxDuration
     }
 
+    /// The Shift press that cancelled a close animation must not also count as a tap.
+    public mutating func cancelArmedTap() {
+        tap.contaminateAll()
+    }
+
     public mutating func handle(_ event: GestureEvent) -> [GestureEffect] {
         switch event {
         case let .mouseDown(_, changeCount, location):
+            // A new mouse-down means the button went up, even when Finder swallowed
+            // that mouse-up inside its drag loop. Leaving `.wheel` without a dismiss
+            // is what stranded the panel on screen.
+            let dismiss: [GestureEffect] = {
+                if case .wheel = phase { return [.dismissWheel] }
+                return []
+            }()
             lastLocation = location
             tap.reset()
             phase = .pressed(baselineChangeCount: changeCount)
-            return []
+            return dismiss
 
         case let .mouseDragged(_, changeCount, location, filePaths, hasFilePromise, promisedTypes):
             lastLocation = location
@@ -102,7 +125,15 @@ public struct DragGestureMachine: Equatable {
             return endTracking(dismissWheel: true)
 
         case let .flagsChanged(time, flags):
-            guard let key = tap.flagsChanged(time: time, flags: flags) else { return [] }
+            let shiftWasDown = tap.isDown(.shift)
+            guard let key = tap.flagsChanged(time: time, flags: flags) else {
+                // Arm a lookup on Shift-down. The ring still waits for a clean release,
+                // so Shift held as a typing modifier never opens it.
+                if !shiftWasDown && flags == .shift {
+                    return [.prefetchAnchor]
+                }
+                return []
+            }
             return handleTap(key)
 
         case let .keyDown(_, key):

@@ -150,6 +150,25 @@ final class GestureTests: XCTestCase {
         XCTAssertEqual(effects.count, 1)
     }
 
+    func testShiftDownPrefetchesAndDoesNotOpenUntilRelease() {
+        var machine = armed()
+        XCTAssertEqual(machine.handle(.flagsChanged(time: 1, flags: .shift)), [.prefetchAnchor])
+        if case .dragging = machine.phase {} else { XCTFail("prefetch must not open the wheel") }
+        let effects = machine.handle(.flagsChanged(time: 1.1, flags: []))
+        guard case .showWheel = effects.first else { return XCTFail("\(effects)") }
+    }
+
+    func testMouseDownWhileWheelDismissesIt() {
+        var machine = openWheel()
+        let effects = machine.handle(.mouseDown(time: 2, changeCount: 9, location: Point(x: 1, y: 1)))
+        XCTAssertEqual(effects, [.dismissWheel])
+        if case .pressed(let baseline) = machine.phase {
+            XCTAssertEqual(baseline, 9)
+        } else {
+            XCTFail("wheel phase should not survive a new mouse-down, got \(machine.phase)")
+        }
+    }
+
     func testArrowKeyWhileWheelEmitsWheelKey() {
         var machine = openWheel()
         let effects = machine.handle(.keyDown(time: 3, key: .right))

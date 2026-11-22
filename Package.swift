@@ -14,9 +14,19 @@ let package = Package(
             name: "PithCore",
             path: "Sources/PithCore"
         ),
-        // The app's headless conversion code (App/Engine), compiled a second time as a
-        // module so the integration suite exercises exactly what Pith.app runs.
-        // The app target compiles these same files directly; it does not link this module.
+        .testTarget(
+            name: "PithCoreTests",
+            dependencies: ["PithCore"],
+            path: "Tests/PithCoreTests"
+        )
+    ] + pithEngineTargets()
+)
+
+/// App/Engine imports AppKit, so `swift test` on Linux builds PithCore only.
+/// On macOS the engine target and its tests are part of the package.
+func pithEngineTargets() -> [Target] {
+    #if os(macOS)
+    return [
         .target(
             name: "PithEngine",
             dependencies: ["PithCore"],
@@ -28,14 +38,12 @@ let package = Package(
             ]
         ),
         .testTarget(
-            name: "PithCoreTests",
-            dependencies: ["PithCore"],
-            path: "Tests/PithCoreTests"
-        ),
-        .testTarget(
             name: "PithEngineTests",
             dependencies: ["PithEngine", "PithCore"],
             path: "Tests/PithEngineTests"
         )
     ]
-)
+    #else
+    return []
+    #endif
+}
