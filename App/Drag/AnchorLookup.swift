@@ -1,35 +1,62 @@
 import AppKit
 import PithCore
 
-struct AnchorRead {
-    var paths: [String]
-    var located: LocatedIcon
-}
-
-/// Icon geometry from Accessibility, off the main thread. The Finder AppleScript
-/// is not run here: `NSAppleScript` is main-thread-only, and the open path asks
-/// for it only after the ring has been told to draw.
+/// Accessibility off the main thread. The compiled Finder script runs on the main
+/// thread only when that walk did not already name the selected icon, so an open
+/// that Accessibility can answer sends no Apple Events.
 enum AnchorLookup {
-    static func resolve(
+    static func resolveClick(
         mouse: CGPoint,
         mainScreenMaxY: Double,
         finderPIDs: Set<pid_t>,
-        knownPaths: [String],
-        completion: @escaping (AnchorRead) -> Void
+        completion: @escaping (FinderSnapshot) -> Void
     ) {
-        let mouse = mouse
-        let knownPaths = knownPaths
         DispatchQueue.global(qos: .userInteractive).async {
             let snapshot = FinderIconLocator.snapshot(
                 near: mouse,
-                knownPaths: knownPaths,
+                knownPaths: [],
                 mainScreenMaxY: mainScreenMaxY,
                 finderPIDs: finderPIDs
             )
-            let read = AnchorRead(paths: snapshot.paths, located: snapshot.located)
-            DispatchQueue.main.async {
-                completion(read)
+            if snapshot.located.center != nil, !snapshot.paths.isEmpty {
+                DispatchQueue.main.async { completion(snapshot) }
+                return
             }
+            DispatchQueue.main.async {
+                let paths = CompiledFinderScript.shared.execute()
+                guard !paths.isEmpty else {
+                    completion(snapshot)
+                    return
+                }
+                DispatchQueue.global(qos: .userInteractive).async {
+                    let located = FinderIconLocator.snapshot(
+                        near: mouse,
+                        knownPaths: paths,
+                        mainScreenMaxY: mainScreenMaxY,
+                        finderPIDs: finderPIDs
+                    )
+                    DispatchQueue.main.async { completion(located) }
+                }
+            }
+        }
+    }
+
+    /// Drag already knows the file paths from the pasteboard, so this is Accessibility only.
+    static func resolveDrag(
+        mouse: CGPoint,
+        paths: [String],
+        mainScreenMaxY: Double,
+        finderPIDs: Set<pid_t>,
+        completion: @escaping (LocatedIcon) -> Void
+    ) {
+        DispatchQueue.global(qos: .userInteractive).async {
+            let snapshot = FinderIconLocator.snapshot(
+                near: mouse,
+                knownPaths: paths,
+                mainScreenMaxY: mainScreenMaxY,
+                finderPIDs: finderPIDs
+            )
+            DispatchQueue.main.async { completion(snapshot.located) }
         }
     }
 }

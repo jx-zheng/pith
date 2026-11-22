@@ -10,7 +10,13 @@ import PithCore
 /// file's icon is measured once at the grab and the ring is placed at
 /// `pointer + (icon - grab)`. The pointer itself is last.
 enum DraggedIconRing {
-    static func placement(of sender: NSDraggingInfo, mouse: CGPoint, dragOrigin: CGPoint, paths: [String]) -> CGPoint {
+    static func placement(
+        of sender: NSDraggingInfo,
+        mouse: CGPoint,
+        dragOrigin: CGPoint,
+        paths: [String],
+        prelocated: LocatedIcon? = nil
+    ) -> CGPoint {
         let pointer = Point(x: Double(mouse.x), y: Double(mouse.y))
         let grab = Point(x: Double(dragOrigin.x), y: Double(dragOrigin.y))
         if let image = iconPiece(of: sender, mouse: mouse) {
@@ -28,7 +34,7 @@ enum DraggedIconRing {
             return CGPoint(x: choice.center.x, y: choice.center.y)
         }
 
-        let located = FinderIconLocator.locate(near: dragOrigin, paths: paths)
+        let located = prelocated ?? FinderIconLocator.locate(near: dragOrigin, paths: paths)
         let limit = Double(PithTheme.outerRadius) * 2
         if let found = located.center {
             let icon = Point(x: Double(found.x), y: Double(found.y))

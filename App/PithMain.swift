@@ -35,19 +35,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let dropGrace: TimeInterval = 0.4
     private var undoMonitors: [Any] = []
     private var ringDismiss = RingDismissMachine()
-    private var anchorCache: CachedAnchor?
-    private var cachedPaths: [String] = []
-    private var anchorGeneration = 0
-    private var refineToken = 0
-    private var shownCenter = Point.zero
-    private var shownProvisional = false
-    private var shownPaths: [String] = []
+    private var lookupGeneration = 0
+    private var readyClick: FinderSnapshot?
+    private var pendingClick: PendingClick?
+    private var dragLocateGeneration = 0
     private var closeToken = 0
     private var graceToken = 0
     private var buttonPoll: Timer?
     private var presentation = 0
-    /// Presentation id that already queued the main-thread Finder script.
-    private var scriptFallbackForPresentation = -1
     private var latencyAction: String?
     private var latencyKeyTime: Double?
     private var latencyOpenSignpost: OSSignpostID?
@@ -82,6 +77,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.contains("--placement-probe") {
+            runPlacementProbe()
+            return
+        }
         if handOffToRunningInstance() { return }
         model.refreshTools()
         pushSettings()
@@ -193,8 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.dismissFromGesture(cause)
         }
         drag.onDragBegan = { [weak self] session in
-            guard let self else { return }
-            self.refreshAnchor(knownPaths: session.filePaths, grab: session.location)
+            self?.beginDragLocate(session)
         }
         drag.onWheelKey = { [weak self] key in
             guard let self, !self.wheel.isClosing else { return }
@@ -207,7 +205,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.prefetchOrReopen()
         }
         drag.onGlobalMouseDown = { [weak self] in
-            guard let self, self.wheel.isShowing else { return }
+            guard let self else { return }
+            if !self.wheel.isShowing {
+                self.pendingClick = nil
+                return
+            }
             self.apply(self.ringDismiss.handle(.mouseDown(.left, onActionableWedge: false)))
         }
         drag.onUnguardedMouseUp = { [weak self] in
@@ -280,26 +282,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard !drag.typedSinceClick,
               NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else { return }
         armLatency("open", keyTime: keyTime)
-        let pointer = currentPointer()
-        let paths = cachedPaths
-        let choice = RingOpenPosition.first(RingOpenRequest(
-            mode: .click,
-            pointer: pointer,
-            dragOrigin: nil,
-            cache: positionCache(for: paths)
-        ))
-        logPosition(choice, mode: "click", paths: paths, pointer: pointer)
-        refineToken = anchorGeneration
-        shownCenter = choice.center
-        shownProvisional = choice.provisionalPointer
-        shownPaths = paths
-        if paths.isEmpty {
-            showProvisional(at: choice.center, action: "open")
+        if lookupGeneration == 0 {
+            beginClickLookup()
+        }
+        if let ready = readyClick, readyClickMatchesCurrentLookup {
+            showClick(ready, kind: kind)
             return
         }
-        var session = makeSession(paths: paths, at: choice.center)
-        clickMode = true
-        showWheel(kind: kind, at: choice.center, session: session, action: "open")
+        pendingClick = PendingClick(kind: kind, keyTime: keyTime, generation: lookupGeneration)
     }
 
     private func openDragWheel(kind: WheelKind, at point: Point, session: DragSession, keyTime: Double) {
@@ -310,20 +300,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         clickMode = false
         armLatency("open", keyTime: keyTime)
-        let choice = RingOpenPosition.first(RingOpenRequest(
-            mode: .drag,
-            pointer: point,
-            dragOrigin: drag.fileDragOrigin,
-            cache: positionCache(for: session.filePaths)
-        ))
-        logPosition(choice, mode: "drag", paths: session.filePaths, pointer: point)
-        refineToken = anchorGeneration
-        shownCenter = choice.center
-        shownProvisional = choice.provisionalPointer
-        shownPaths = session.filePaths
-        var placed = session
-        placed.location = choice.center
-        showWheel(kind: kind, at: choice.center, session: placed, action: "open")
+        showWheel(kind: kind, at: point, session: session, action: "open")
     }
 
     private func prefetchOrReopen() {
@@ -332,13 +309,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             apply(ringDismiss.handle(.shift(canCycle: false)))
             return
         }
-        let grab = drag.fileDragOrigin
-        let paths = session?.filePaths ?? cachedPaths
-        if let grab, !paths.isEmpty {
-            refreshAnchor(knownPaths: paths, grab: grab)
-        } else {
-            refreshAnchor(knownPaths: nil, grab: nil)
-        }
+        beginClickLookup()
     }
 
     private func wireWheel() {
@@ -355,18 +326,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wheel.onMissClick = { [weak self] in
             guard let self, self.clickMode else { return }
             self.apply(self.ringDismiss.handle(.mouseDown(.left, onActionableWedge: false)))
-        }
-        wheel.onDragImageCenter = { [weak self] center in
-            guard let self else { return }
-            self.propose(
-                center: Point(x: Double(center.x), y: Double(center.y)),
-                source: .dragImage,
-                filename: "",
-                icon: nil,
-                cell: nil,
-                allowLongMove: false,
-                mode: "drag"
-            )
         }
     }
 
@@ -445,28 +404,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.kind = chosen
         self.session = session
         let built = WheelContents.build(kind: chosen, session: session, availability: model.tools, probeDisk: false)
-        publish(built)
+        let cycling = point == nil && wheel.isShowing && !wheel.isClosing
+        if cycling {
+            withAnimation(PithTheme.wheelSwitchAnimation) {
+                publish(built)
+                wheel.model.generation += 1
+            }
+        } else {
+            publish(built)
+        }
         if latencyAction != nil {
             RingLogger.write(LatencyMark.show(action))
         }
-        let cycling = point == nil && wheel.isShowing && !wheel.isClosing
         if let point {
             let screen = CGPoint(x: point.x, y: point.y)
             let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? screen
             invalidateClose()
-            wheel.present(at: screen, dragOrigin: origin, paths: session.filePaths)
-            shownCenter = point
+            wheel.present(at: screen, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: session.filePaths)
             notePresence()
         } else if !wheel.isShowing {
             let mouse = NSEvent.mouseLocation
             let origin = drag.fileDragOrigin.map { CGPoint(x: $0.x, y: $0.y) } ?? mouse
-            let center = Point(x: mouse.x, y: mouse.y)
             invalidateClose()
-            wheel.present(at: mouse, dragOrigin: origin, paths: session.filePaths)
-            shownCenter = center
+            wheel.present(at: mouse, hiddenUntilAligned: !clickMode, dragOrigin: origin, paths: session.filePaths)
             notePresence()
-        } else if cycling {
-            wheel.commitFrame()
         }
         wheel.commitFrame()
         finishLatencyIfArmed()
@@ -474,50 +435,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         refreshDiskFacts(session: session, id: presentation)
     }
 
-    private func showProvisional(at center: Point, action: String) {
-        clickMode = true
-        let session = makeSession(paths: [], at: center)
-        self.session = session
-        wheel.model.segments = []
-        wheel.model.highlighted = nil
-        wheel.model.centerText = "…"
-        built = nil
-        navigation = WheelNavigation(count: 0)
-        if latencyAction != nil {
-            RingLogger.write(LatencyMark.show(action))
-        }
-        let screen = CGPoint(x: center.x, y: center.y)
-        invalidateClose()
-        wheel.present(at: screen, dragOrigin: screen, paths: [])
-        notePresence()
-        wheel.commitFrame()
-        finishLatencyIfArmed()
-        presentation += 1
-        scheduleScriptFallbackIfNeeded()
+    private struct PendingClick {
+        var kind: WheelKind
+        var keyTime: Double
+        var generation: Int
     }
 
-    /// Finder's AppleScript runs on the main thread, and only after this turn has
-    /// committed the ring. Accessibility is the off-main path; the script is the fallback.
-    private func scheduleScriptFallbackIfNeeded() {
-        guard wheel.isShowing, !wheel.isClosing, shownPaths.isEmpty else { return }
-        let id = presentation
-        guard scriptFallbackForPresentation != id else { return }
-        scriptFallbackForPresentation = id
-        DispatchQueue.main.async { [weak self] in
-            guard let self,
-                  self.presentation == id,
-                  self.wheel.isShowing,
-                  !self.wheel.isClosing,
-                  self.shownPaths.isEmpty else { return }
-            let scripted = CompiledFinderScript.shared.execute()
-            guard !scripted.isEmpty else {
-                if self.shownProvisional {
-                    self.hideImmediately(reason: "no-selection")
-                }
-                return
+    private var readyClickMatchesCurrentLookup: Bool {
+        readyClick != nil && lookupGeneration != 0
+    }
+
+    /// Shift went down. Accessibility runs now so it overlaps the tap. The ring
+    /// stays hidden until this returns the same centre main would show.
+    private func beginClickLookup() {
+        lookupGeneration += 1
+        let token = lookupGeneration
+        readyClick = nil
+        let context = finderContext()
+        AnchorLookup.resolveClick(mouse: context.mouse, mainScreenMaxY: context.maxY, finderPIDs: context.pids) { [weak self] snap in
+            guard let self, token == self.lookupGeneration else { return }
+            self.readyClick = snap
+            guard let pending = self.pendingClick, pending.generation == token else { return }
+            self.pendingClick = nil
+            self.showClick(snap, kind: pending.kind)
+        }
+    }
+
+    private func showClick(_ snap: FinderSnapshot, kind: WheelKind) {
+        guard !snap.paths.isEmpty else {
+            cancelLatency()
+            return
+        }
+        let mouse = NSEvent.mouseLocation
+        let center = snap.located.center ?? mouse
+        FinderIconLocator.log(snap.located, mode: "click", mouse: mouse, paths: snap.paths, center: center)
+        let session = makeSession(paths: snap.paths, at: Point(x: center.x, y: center.y))
+        clickMode = true
+        showWheel(kind: kind, at: session.location, session: session, action: "open")
+    }
+
+    private func beginDragLocate(_ session: DragSession) {
+        guard !session.filePaths.isEmpty else { return }
+        dragLocateGeneration += 1
+        let token = dragLocateGeneration
+        wheel.preparedDragLocation = nil
+        let origin = CGPoint(x: session.location.x, y: session.location.y)
+        let context = finderContext(mouse: origin)
+        AnchorLookup.resolveDrag(
+            mouse: origin,
+            paths: session.filePaths,
+            mainScreenMaxY: context.maxY,
+            finderPIDs: context.pids
+        ) { [weak self] located in
+            guard let self, token == self.dragLocateGeneration, located.center != nil else { return }
+            self.wheel.preparedDragLocation = located
+        }
+    }
+
+    private func finderContext(mouse: CGPoint? = nil) -> (mouse: CGPoint, maxY: Double, pids: Set<pid_t>) {
+        let mouse = mouse ?? NSEvent.mouseLocation
+        let maxY = NSScreen.screens.first.map { Double($0.frame.maxY) } ?? 0
+        let pids = Set(
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").map(\.processIdentifier)
+        )
+        return (mouse, maxY, pids)
+    }
+
+    /// Same locate path as a Shift open, then exit. No window.
+    private func runPlacementProbe() {
+        let start = CACurrentMediaTime()
+        let context = finderContext()
+        var snap = FinderIconLocator.snapshot(
+            near: context.mouse,
+            knownPaths: [],
+            mainScreenMaxY: context.maxY,
+            finderPIDs: context.pids
+        )
+        if snap.paths.isEmpty || snap.located.center == nil {
+            let paths = CompiledFinderScript.shared.execute()
+            if !paths.isEmpty {
+                snap = FinderIconLocator.snapshot(
+                    near: context.mouse,
+                    knownPaths: paths,
+                    mainScreenMaxY: context.maxY,
+                    finderPIDs: context.pids
+                )
             }
-            self.cachedPaths = scripted
-            self.refreshAnchor(knownPaths: scripted, grab: self.drag.fileDragOrigin)
+        }
+        let center = snap.located.center ?? context.mouse
+        FinderIconLocator.log(snap.located, mode: "click", mouse: context.mouse, paths: snap.paths, center: center)
+        let elapsed = (CACurrentMediaTime() - start) * 1000
+        RingLogger.write(String(format: "placement-probe elapsed=%.1fms", elapsed))
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+            exit(0)
         }
     }
 
@@ -542,12 +552,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func currentPointer() -> Point {
         let mouse = NSEvent.mouseLocation
         return Point(x: mouse.x, y: mouse.y)
-    }
-
-    private func positionCache(for paths: [String]) -> CachedAnchor? {
-        guard let anchorCache else { return nil }
-        if paths.isEmpty || anchorCache.paths == paths { return anchorCache }
-        return nil
     }
 
     private func canCycleRing() -> Bool {
@@ -578,146 +582,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func refreshAnchor(knownPaths: [String]?, grab: Point?) {
-        anchorGeneration += 1
-        let token = anchorGeneration
-        let mouse = NSEvent.mouseLocation
-        let maxY = NSScreen.screens.first.map { Double($0.frame.maxY) } ?? 0
-        let pids = Set(
-            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").map(\.processIdentifier)
-        )
-        AnchorLookup.resolve(
-            mouse: mouse,
-            mainScreenMaxY: maxY,
-            finderPIDs: pids,
-            knownPaths: knownPaths ?? []
-        ) { [weak self] read in
-            guard let self, token == self.anchorGeneration else { return }
-            if !read.paths.isEmpty {
-                self.cachedPaths = read.paths
-            }
-            if let found = read.located.center {
-                let center = Point(x: Double(found.x), y: Double(found.y))
-                self.anchorCache = CachedAnchor(
-                    paths: read.paths.isEmpty ? (knownPaths ?? self.cachedPaths) : read.paths,
-                    center: center,
-                    grab: grab,
-                    source: read.located.source,
-                    filename: read.located.filename,
-                    icon: read.located.icon,
-                    cell: read.located.cell
-                )
-            }
-            guard token == self.refineToken, self.wheel.isShowing, !self.wheel.isClosing else { return }
-            self.applyResolved(read)
-        }
-    }
-
-    private func applyResolved(_ read: AnchorRead) {
-        let paths = read.paths
-        let pathsChanged = !paths.isEmpty && paths != shownPaths
-        if pathsChanged {
-            cachedPaths = paths
-            shownPaths = paths
-            var session = makeSession(paths: paths, at: shownCenter)
-            session.location = shownCenter
-            clickMode = true
-            if let chosen = nonEmptyKind(startingAt: .convert, session: session) {
-                self.session = session
-                self.kind = chosen
-                let built = WheelContents.build(kind: chosen, session: session, availability: model.tools, probeDisk: false)
-                publish(built)
-                presentation += 1
-                refreshDiskFacts(session: session, id: presentation)
-            }
-        }
-        guard let found = read.located.center else {
-            if paths.isEmpty && shownPaths.isEmpty {
-                scheduleScriptFallbackIfNeeded()
-            }
-            return
-        }
-        propose(
-            center: Point(x: Double(found.x), y: Double(found.y)),
-            source: read.located.source,
-            filename: read.located.filename,
-            icon: read.located.icon,
-            cell: read.located.cell,
-            allowLongMove: pathsChanged,
-            mode: clickMode ? "click" : "drag"
-        )
-    }
-
-    private func propose(
-        center: Point,
-        source: RingAnchorSource,
-        filename: String,
-        icon: RingRect?,
-        cell: RingRect?,
-        allowLongMove: Bool,
-        mode: String
-    ) {
-        let decision = RingOpenPosition.refine(
-            shown: shownCenter,
-            provisionalPointer: shownProvisional,
-            proposed: center,
-            allowLongMove: allowLongMove
-        )
-        switch decision {
-        case .stay(let reason):
-            guard reason != "already-there" else { return }
-            logResolved(center: shownCenter, source: source, filename: filename, icon: icon, cell: cell, mode: mode, reason: reason)
-        case .move(let point, let reason):
-            shownCenter = point
-            shownProvisional = false
-            wheel.move(to: CGPoint(x: point.x, y: point.y))
-            if var session {
-                session.location = point
-                self.session = session
-            }
-            logResolved(center: point, source: source, filename: filename, icon: icon, cell: cell, mode: mode, reason: reason)
-        }
-    }
-
-    private func logPosition(_ choice: RingFirstPosition, mode: String, paths: [String], pointer: Point) {
-        let line = RingLog(
-            mode: mode,
-            source: choice.source,
-            filename: anchorCache?.filename ?? "",
-            icon: anchorCache?.icon,
-            cell: anchorCache?.cell,
-            pointer: pointer,
-            center: choice.center,
-            selectedCount: paths.count,
-            reason: choice.reason
-        ).line
-        RingLogger.write(line)
-    }
-
-    private func logResolved(
-        center: Point,
-        source: RingAnchorSource,
-        filename: String,
-        icon: RingRect?,
-        cell: RingRect?,
-        mode: String,
-        reason: String
-    ) {
-        let pointer = currentPointer()
-        let line = RingLog(
-            mode: mode,
-            source: source,
-            filename: filename,
-            icon: icon,
-            cell: cell,
-            pointer: pointer,
-            center: center,
-            selectedCount: shownPaths.count,
-            reason: reason
-        ).line
-        RingLogger.write(line)
-    }
-
     private func refreshDiskFacts(session: DragSession, id: Int) {
         let paths = session.filePaths
         guard !paths.isEmpty else { return }
@@ -741,6 +605,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func armLatency(_ action: String, keyTime: Double) {
+        if let id = latencyOpenSignpost { RingLogger.endOpen(id) }
+        if let id = latencySwitchSignpost { RingLogger.endSwitch(id) }
         latencyAction = action
         latencyKeyTime = keyTime
         RingLogger.write(LatencyMark.key(action))
@@ -757,6 +623,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let action = latencyAction, let keyTime = latencyKeyTime else { return }
         let milliseconds = (CACurrentMediaTime() - keyTime) * 1000
         RingLogger.write(LatencyMark.frame(action, keyToFrameMilliseconds: milliseconds))
+        if let id = latencyOpenSignpost {
+            RingLogger.endOpen(id)
+        }
+        if let id = latencySwitchSignpost {
+            RingLogger.endSwitch(id)
+        }
+        latencyAction = nil
+        latencyKeyTime = nil
+        latencyOpenSignpost = nil
+        latencySwitchSignpost = nil
+    }
+
+    private func cancelLatency() {
         if let id = latencyOpenSignpost {
             RingLogger.endOpen(id)
         }

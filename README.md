@@ -96,6 +96,12 @@ scripts/install.sh --app    # just build and install Pith
 
 The script uses Homebrew when the current user owns it. Otherwise it installs per user: ffmpeg, ffprobe and pandoc go to `~/.local/bin`, and LibreOffice goes to `~/Applications`. Pith looks in both places.
 
+To check the ring centre without pressing Shift, run the installed binary with `--placement-probe`. It uses the same locate path as an open, logs the usual `Pith: ring mode=… center=… reason=…` line plus `placement-probe elapsed=…ms`, and exits:
+
+```
+/Applications/Pith.app/Contents/MacOS/Pith --placement-probe
+```
+
 Signing defaults to Automatic (your signed-in Apple ID team in Xcode). For Manual signing, export `PITH_TEAM` and `PITH_IDENTITY` before running `scripts/install.sh --app`. If an Apple Development certificate is in your keychain, install.sh signs with it so Accessibility persists across rebuilds; override with PITH_IDENTITY.
 
 ### Homebrew
@@ -115,8 +121,8 @@ All sampled colour, type, and wheel geometry live in `App/UI/Theme.swift`.
 - Wheel diameter 400 pt, inner radius 0.40 of the outer, gap 6.5°, corner radius 18.
 - Highlight `#EB4420` (235, 68, 32). Cream glass tint `(1.00, 0.86, 0.68)` over an `NSVisualEffectView` (`.popover` for the wheel, `.hudWindow` for the progress card).
 - Format labels are uppercase, bold, tracked. Tool labels sit under an SF Symbol.
-- The ring is drawn at full opacity on the frame after Shift is released. There is no intro animation.
-- Shift cycle swaps the wedges in place on that same frame.
+- Appear animation: scale 0.84 → 1 and fade, spring response 0.32, damping 0.74.
+- Shift cycle: the open ring turns clockwise and fades while the next ring settles in from the other direction (spring response 0.46, damping 0.78).
 - Clicking away, Escape, and the other non-action dismisses fade and scale the ring down over 120ms (ease-out). A fallback orders the panel out at 150ms. A wedge click or drop closes immediately, with no fade. Shift during the fade restores the same panel at full opacity.
 - Format wheel for a PDF, clockwise from 12 o'clock: DOCX, JPG, PNG, TXT. The centre pill shows the hovered label, or the file size (`1.2 MB`) when nothing is hovered.
 - Image wheel, clockwise from 12: PNG, WEBP, HEIC, TIFF, AVIF, BMP, PDF, GIF.

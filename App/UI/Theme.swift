@@ -6,9 +6,7 @@ import SwiftUI
 /// supplies the rest, so the wedge shifts with the wallpaper the way the
 /// original does.
 enum PithTheme {
-    /// Kept so older settings copy can still name the token. The open and cycle
-    /// paths draw the new ring at full opacity on the first frame; only a
-    /// non-action dismiss fades, and that timing lives in `RingCloseTiming`.
+    /// In-place cycle when Shift is tapped while a wheel is open.
     static let wheelSwitchAnimation: Animation = .spring(response: 0.46, dampingFraction: 0.78)
     static let wheelDiameter: CGFloat = 400
     static let innerRatio: CGFloat = 0.40

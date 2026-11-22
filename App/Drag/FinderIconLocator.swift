@@ -170,7 +170,7 @@ enum FinderIconLocator {
         reason: String,
         maxY: Double
     ) -> LocatedIcon {
-        let center = IconRingGeometry.center(of: bounds.icon)
+        let center = IconRingGeometry.placedCenter(icon: bounds.icon, pointer: bounds.icon.center)
         let appKitY = IconRingGeometry.appKitY(fromTopLeftY: center.y, mainScreenMaxY: maxY)
         return LocatedIcon(
             center: CGPoint(x: center.x, y: appKitY),

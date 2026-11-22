@@ -13,19 +13,22 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     /// True from the moment a non-action dismiss starts until the panel is ordered out or restored.
     private(set) var isClosing = false
     /// Set once the drag-image icon has been applied for this presentation.
-    private var appliedDragImage = false
+    private var alignedToIcon = false
     /// The pointer where the wheel appeared. A drop waits until it moves, or until a later entry.
     private var hover = RingHoverGate()
     private var anchorMouse = Point.zero
     private var sawInitialDragEntry = false
+    private var dragOrigin = CGPoint.zero
+    private var dragPaths: [String] = []
+    /// Icon measured at the grab, off the main thread, before Shift. Same value
+    /// `placement` would read itself; used so the align step does not walk again.
+    var preparedDragLocation: LocatedIcon?
     var onDropIndex: ((Int) -> Void)?
     var onHoverIndex: ((Int?) -> Void)?
     /// Click-select mode: a segment was clicked.
     var onClickIndex: ((Int) -> Void)?
     /// Click-select mode: the centre, a gap, a corner, or a wedge with no action.
     var onMissClick: (() -> Void)?
-    /// Drag-image icon center, in screen coordinates. No accessibility lookup.
-    var onDragImageCenter: ((CGPoint) -> Void)?
 
     override init() {
         let side = PithTheme.wheelDiameter + PithTheme.panelPadding
@@ -50,17 +53,23 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         container.addSubview(dropView, positioned: .above, relativeTo: host)
     }
 
-    /// Draws the ring at `screenPoint` on this turn. Full opacity, no intro animation.
-    func present(at screenPoint: CGPoint, dragOrigin: CGPoint, paths: [String]) {
-        _ = (dragOrigin, paths)
-        appliedDragImage = false
+    /// `hiddenUntilAligned` keeps a drag wheel invisible until the icon center is known,
+    /// so it does not appear on the pointer and then jump. Click mode already has that center.
+    func present(at screenPoint: CGPoint, hiddenUntilAligned: Bool, dragOrigin: CGPoint, paths: [String]) {
+        alignedToIcon = false
         hover = RingHoverGate()
         sawInitialDragEntry = false
         anchorMouse = Point(x: Double(NSEvent.mouseLocation.x), y: Double(NSEvent.mouseLocation.y))
+        self.dragOrigin = dragOrigin
+        dragPaths = paths
         model.highlighted = nil
-        model.appeared = true
         restoreInteractive()
+        panel.alphaValue = hiddenUntilAligned ? 0 : 1
         moveRing(to: screenPoint)
+        if !isShowing {
+            model.appeared = false
+            model.replay += 1
+        }
         panel.orderFrontRegardless()
         isShowing = true
     }
@@ -210,13 +219,23 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         return draggingUpdated(sender)
     }
 
-    /// Local drag-image icon only. Accessibility lookup stays off this path.
+    /// Places the ring once, then reveals it. A valid drag-image icon wins.
+    /// Otherwise the ring sits at `pointer + (icon at the grab - grab)`.
     private func alignRingToDraggedIcon(_ sender: NSDraggingInfo) {
-        guard !appliedDragImage, !isClosing else { return }
+        guard !alignedToIcon, !isClosing else { return }
+        alignedToIcon = true
         let mouse = NSEvent.mouseLocation
-        guard let image = DraggedIconRing.iconPiece(of: sender, mouse: mouse) else { return }
-        appliedDragImage = true
-        onDragImageCenter?(CGPoint(x: image.center.x, y: image.center.y))
+        let prepared = preparedDragLocation
+        preparedDragLocation = nil
+        let center = DraggedIconRing.placement(
+            of: sender,
+            mouse: mouse,
+            dragOrigin: dragOrigin,
+            paths: dragPaths,
+            prelocated: prepared
+        )
+        moveRing(to: center)
+        panel.alphaValue = 1
     }
 
     private func moveRing(to screenPoint: CGPoint) {
