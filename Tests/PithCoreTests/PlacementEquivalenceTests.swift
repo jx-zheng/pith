@@ -12,4 +12,11 @@ final class PlacementEquivalenceTests: XCTestCase {
         XCTAssertEqual(center.y, 595, accuracy: 0.001)
         XCTAssertNotEqual(center, pointer, "the ring sits on the icon, not the pointer")
     }
+
+    func testLatencyLogLines() {
+        XCTAssertEqual(LatencyMark.key("open"), "latency open key")
+        XCTAssertEqual(LatencyMark.show("switch"), "latency switch show")
+        XCTAssertEqual(LatencyMark.frame("open", keyToFrameMilliseconds: 12.34), "latency open key->frame=12.3ms")
+        XCTAssertEqual(LatencyMark.frame("switch", keyToFrameMilliseconds: 4), "latency switch key->frame=4.0ms")
+    }
 }
