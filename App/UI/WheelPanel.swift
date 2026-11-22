@@ -145,8 +145,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
     }
 
     func commitFrame() {
-        panel.layoutSubtreeIfNeeded()
         panel.contentView?.layoutSubtreeIfNeeded()
+        panel.layoutIfNeeded()
         panel.displayIfNeeded()
         CATransaction.flush()
     }
@@ -159,7 +159,8 @@ final class WheelPanelController: NSObject, NSDraggingDestination {
         panel.ignoresMouseEvents = true
         panel.setFrameOrigin(NSPoint(x: -8000, y: -8000))
         panel.orderFrontRegardless()
-        panel.layoutSubtreeIfNeeded()
+        panel.contentView?.layoutSubtreeIfNeeded()
+        panel.layoutIfNeeded()
         panel.displayIfNeeded()
         CATransaction.flush()
         panel.orderOut(nil)

@@ -1,10 +1,15 @@
 import AppKit
 
 /// Reads the current Finder selection (including Desktop icons) via Apple Events.
-/// The script is compiled once at launch. Callers that need a path before the
-/// ring draws should use the cached anchor instead of blocking on this.
+/// The script is compiled once. This call is main-thread-only; the open path
+/// uses the cached anchor and does not wait on it.
 enum FinderSelection {
     static func paths() -> [String] {
-        CompiledFinderScript.shared.pathsFromAnyQueue()
+        if Thread.isMainThread {
+            return CompiledFinderScript.shared.execute()
+        }
+        return DispatchQueue.main.sync {
+            CompiledFinderScript.shared.execute()
+        }
     }
 }

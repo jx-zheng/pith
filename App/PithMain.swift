@@ -1,4 +1,5 @@
 import AppKit
+import os
 import QuartzCore
 import SwiftUI
 import PithCore
@@ -45,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var graceToken = 0
     private var buttonPoll: Timer?
     private var presentation = 0
+    /// Presentation id that already queued the main-thread Finder script.
+    private var scriptFallbackForPresentation = -1
     private var latencyAction: String?
     private var latencyKeyTime: Double?
     private var latencyOpenSignpost: OSSignpostID?
@@ -106,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         wireMenu()
         drag.start()
         wheel.prewarm()
-        AnchorLookup.prewarm()
+        CompiledFinderScript.shared.prewarm()
         observeRingLifetime()
         if !AccessibilityPermission.isTrusted(prompt: false) {
             showOnboarding()
@@ -489,6 +492,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         notePresence()
         wheel.commitFrame()
         finishLatencyIfArmed()
+        presentation += 1
+        scheduleScriptFallbackIfNeeded()
+    }
+
+    /// Finder's AppleScript runs on the main thread, and only after this turn has
+    /// committed the ring. Accessibility is the off-main path; the script is the fallback.
+    private func scheduleScriptFallbackIfNeeded() {
+        guard wheel.isShowing, !wheel.isClosing, shownPaths.isEmpty else { return }
+        let id = presentation
+        guard scriptFallbackForPresentation != id else { return }
+        scriptFallbackForPresentation = id
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  self.presentation == id,
+                  self.wheel.isShowing,
+                  !self.wheel.isClosing,
+                  self.shownPaths.isEmpty else { return }
+            let scripted = CompiledFinderScript.shared.execute()
+            guard !scripted.isEmpty else {
+                if self.shownProvisional {
+                    self.hideImmediately(reason: "no-selection")
+                }
+                return
+            }
+            self.cachedPaths = scripted
+            self.refreshAnchor(knownPaths: scripted, grab: self.drag.fileDragOrigin)
+        }
     }
 
     private func publish(_ built: WheelContents.Built) {
@@ -602,8 +632,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         guard let found = read.located.center else {
-            if paths.isEmpty && shownProvisional {
-                hideImmediately(reason: "no-selection")
+            if paths.isEmpty && shownPaths.isEmpty {
+                scheduleScriptFallbackIfNeeded()
             }
             return
         }

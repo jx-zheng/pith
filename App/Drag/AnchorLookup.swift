@@ -6,13 +6,10 @@ struct AnchorRead {
     var located: LocatedIcon
 }
 
-/// Finder selection and icon geometry. Compiled once, then run off the main thread
-/// so a Shift tap can draw the ring before any Apple event returns.
+/// Icon geometry from Accessibility, off the main thread. The Finder AppleScript
+/// is not run here: `NSAppleScript` is main-thread-only, and the open path asks
+/// for it only after the ring has been told to draw.
 enum AnchorLookup {
-    static func prewarm() {
-        CompiledFinderScript.shared.prewarm()
-    }
-
     static func resolve(
         mouse: CGPoint,
         mainScreenMaxY: Double,
@@ -22,27 +19,13 @@ enum AnchorLookup {
     ) {
         let mouse = mouse
         let knownPaths = knownPaths
-        CompiledFinderScript.shared.async {
-            var snapshot = FinderIconLocator.snapshot(
+        DispatchQueue.global(qos: .userInteractive).async {
+            let snapshot = FinderIconLocator.snapshot(
                 near: mouse,
                 knownPaths: knownPaths,
                 mainScreenMaxY: mainScreenMaxY,
                 finderPIDs: finderPIDs
             )
-            if snapshot.paths.isEmpty && knownPaths.isEmpty {
-                let scripted = CompiledFinderScript.shared.execute()
-                if !scripted.isEmpty {
-                    snapshot = FinderIconLocator.snapshot(
-                        near: mouse,
-                        knownPaths: scripted,
-                        mainScreenMaxY: mainScreenMaxY,
-                        finderPIDs: finderPIDs
-                    )
-                    if snapshot.paths.isEmpty {
-                        snapshot = FinderSnapshot(paths: scripted, located: snapshot.located)
-                    }
-                }
-            }
             let read = AnchorRead(paths: snapshot.paths, located: snapshot.located)
             DispatchQueue.main.async {
                 completion(read)
@@ -51,13 +34,13 @@ enum AnchorLookup {
     }
 }
 
-/// One `NSAppleScript`, compiled on a background queue the first time Pith launches.
-/// Reusing it skips the per-open OpenScripting compile and the XProtect check that
-/// went with it. Execution stays on that queue, never on the main thread.
-final class CompiledFinderScript: @unchecked Sendable {
+/// One compiled `NSAppleScript`. Compile and execute both happen on the main
+/// thread; Apple documents the class as main-thread-only, and a background
+/// queue can deadlock the Apple Event manager against the main run loop.
+/// The script is compiled once, so the XProtect check is not paid on every open.
+final class CompiledFinderScript {
     static let shared = CompiledFinderScript()
 
-    private let queue = DispatchQueue(label: "com.kevinzheng.pith.finder-script")
     private var script: NSAppleScript?
     private var compiled = false
 
@@ -72,22 +55,16 @@ final class CompiledFinderScript: @unchecked Sendable {
     end tell
     """
 
+    /// Schedules the one-time compile on the main queue, after the caller returns.
     func prewarm() {
-        queue.async { self.compileIfNeeded() }
+        DispatchQueue.main.async {
+            self.compileIfNeeded()
+        }
     }
 
-    /// For callers that are not already on the script queue. The open path does not use this.
-    func pathsFromAnyQueue() -> [String] {
-        queue.sync { execute() }
-    }
-
-    func async(_ body: @escaping () -> Void) {
-        queue.async(execute: body)
-    }
-
-    /// Runs on the script queue. Callers that are already on it must use this
-    /// rather than hopping again.
+    /// Must run on the main thread. Call it only after the ring frame is committed.
     func execute() -> [String] {
+        dispatchPrecondition(condition: .onQueue(.main))
         compileIfNeeded()
         guard let script else { return [] }
         var error: NSDictionary?
@@ -101,6 +78,7 @@ final class CompiledFinderScript: @unchecked Sendable {
     }
 
     private func compileIfNeeded() {
+        dispatchPrecondition(condition: .onQueue(.main))
         guard !compiled else { return }
         compiled = true
         let script = NSAppleScript(source: Self.source)
