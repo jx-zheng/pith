@@ -12,6 +12,10 @@ public struct TapDetector: Equatable {
 
     public var isHolding: Bool { !pressedAt.isEmpty }
 
+    public func isDown(_ key: TriggerKey) -> Bool {
+        pressedAt[key] != nil
+    }
+
     public mutating func reset() {
         pressedAt.removeAll()
         contaminated.removeAll()

@@ -19,9 +19,9 @@ enum WheelContents {
         var centerFallback: String
     }
 
-    static func build(kind: WheelKind, session: DragSession, availability: ToolAvailability) -> Built {
-        let types = fileTypes(in: session)
-        let fallback = centerFallback(session)
+    static func build(kind: WheelKind, session: DragSession, availability: ToolAvailability, probeDisk: Bool = true) -> Built {
+        let types = fileTypes(in: session, probeDisk: probeDisk)
+        let fallback = centerFallback(session, probeDisk: probeDisk)
         switch kind {
         case .convert:
             let offers = commonOffers(types, availability: availability)
@@ -44,18 +44,20 @@ enum WheelContents {
         }
     }
 
-    static func fileTypes(in session: DragSession) -> [FileType] {
+    static func fileTypes(in session: DragSession, probeDisk: Bool = true) -> [FileType] {
         if !session.filePaths.isEmpty {
-            return session.filePaths.map(resolvePath)
+            return session.filePaths.map { resolvePath($0, probeDisk: probeDisk) }
         }
         let promised = session.promisedTypeIdentifiers.compactMap(resolveUTI)
         return promised
     }
 
-    static func resolvePath(_ path: String) -> FileType {
-        var isDir: ObjCBool = false
-        if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
-            return FileTypes.folder
+    static func resolvePath(_ path: String, probeDisk: Bool = true) -> FileType {
+        if probeDisk {
+            var isDir: ObjCBool = false
+            if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+                return FileTypes.folder
+            }
         }
         if let matched = FileTypes.matching(path: path) { return matched }
         let ext = URL(fileURLWithPath: path).pathExtension
@@ -79,10 +81,14 @@ enum WheelContents {
         return nil
     }
 
-    static func centerFallback(_ session: DragSession) -> String {
+    static func centerFallback(_ session: DragSession, probeDisk: Bool = true) -> String {
         if session.filePaths.count > 1 { return "\(session.filePaths.count) FILES" }
         if session.filePaths.isEmpty && session.hasFilePromise { return "FILE" }
         guard let path = session.filePaths.first else { return "" }
+        if !probeDisk {
+            let ext = URL(fileURLWithPath: path).pathExtension
+            return ext.isEmpty ? URL(fileURLWithPath: path).lastPathComponent : ext.uppercased()
+        }
         let attributes = try? FileManager.default.attributesOfItem(atPath: path)
         if let number = attributes?[.size] as? NSNumber {
             return ByteCountFormat.string(bytes: number.int64Value)

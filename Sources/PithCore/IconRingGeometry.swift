@@ -33,6 +33,13 @@ public enum IconRingGeometry {
         iconImage.center
     }
 
+    /// Centre main logs for `source=selected-element`. The pointer only chooses
+    /// which icon; the ring sits on the midpoint of that icon image.
+    public static func placedCenter(icon: RingRect, pointer: Point) -> Point {
+        if pointer.x.isNaN { return center(of: icon) }
+        return center(of: icon)
+    }
+
     /// The icon image inside a cell or row.
     ///
     /// `images` are the image frames discovered in the cell (accessibility images,

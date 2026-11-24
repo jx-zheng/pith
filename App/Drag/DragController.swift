@@ -3,17 +3,26 @@ import PithCore
 
 final class DragController {
     var machine: DragGestureMachine
-    var onShowWheel: ((WheelKind, Point, DragSession) -> Void)?
-    var onSwitchWheel: ((WheelKind, DragSession) -> Void)?
-    var onDismissWheel: (() -> Void)?
+    var onShowWheel: ((WheelKind, Point, DragSession, Double) -> Void)?
+    var onSwitchWheel: ((WheelKind, DragSession, Double) -> Void)?
+    var onDismissWheel: ((GestureDismissCause) -> Void)?
     var onDragEnded: (() -> Void)?
+    var onDragBegan: ((DragSession) -> Void)?
     var onWheelKey: ((MonitorKey) -> Void)?
     /// A trigger key was tapped with no drag in progress.
-    var onIdleTap: ((WheelKind) -> Void)?
+    var onIdleTap: ((WheelKind, Double) -> Void)?
+    /// Shift went down alone. Starts an anchor lookup, or cancels a close animation.
+    var onPrefetchAnchor: (() -> Void)?
     /// Mouse-down in another app (global monitor only; clicks on Pith's own panels are excluded).
     var onGlobalMouseDown: (() -> Void)?
+    /// Left mouse-up that the gesture machine did not already turn into a dismiss.
+    var onUnguardedMouseUp: (() -> Void)?
+    /// Right button, down or up. Global and local.
+    var onRightMouse: ((Bool) -> Void)?
     /// Any key-down outside Pith, regardless of drag state.
     var onGlobalKeyDown: ((MonitorKey) -> Void)?
+    /// Key-down delivered to Pith itself. Escape must dismiss even when the gesture phase has drifted.
+    var onLocalKeyDown: ((MonitorKey) -> Void)?
     /// True once a real key has been typed since the last click; used to keep
     /// click-select mode from firing while renaming a file or typing.
     private(set) var typedSinceClick = true
@@ -35,26 +44,46 @@ final class DragController {
 
     func start() {
         stop()
-        let mask: NSEvent.EventTypeMask = [.leftMouseDown, .leftMouseDragged, .leftMouseUp, .flagsChanged, .keyDown]
+        let mask: NSEvent.EventTypeMask = [
+            .leftMouseDown, .leftMouseDragged, .leftMouseUp,
+            .rightMouseDown, .rightMouseUp,
+            .flagsChanged, .keyDown
+        ]
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: mask, handler: { [weak self] event in
             guard let self else { return }
             switch event.type {
             case .leftMouseDown:
                 self.typedSinceClick = false
                 self.onGlobalMouseDown?()
+                self.handle(event)
+            case .rightMouseDown:
+                self.onRightMouse?(true)
+            case .rightMouseUp:
+                self.onRightMouse?(false)
             case .keyDown:
                 self.typedSinceClick = true
                 self.onGlobalKeyDown?(self.monitorKey(from: event))
+                self.handle(event)
             default:
-                break
+                self.handle(event)
             }
-            self.handle(event)
         }) {
             monitors.append(monitor)
         }
         // Local monitor covers drags that start inside Pith's own windows.
         if let monitor = NSEvent.addLocalMonitorForEvents(matching: mask, handler: { [weak self] event in
-            self?.handle(event)
+            guard let self else { return event }
+            switch event.type {
+            case .rightMouseDown:
+                self.onRightMouse?(true)
+            case .rightMouseUp:
+                self.onRightMouse?(false)
+            case .keyDown:
+                self.onLocalKeyDown?(self.monitorKey(from: event))
+                self.handle(event)
+            default:
+                self.handle(event)
+            }
             return event
         }) {
             monitors.append(monitor)
@@ -72,15 +101,20 @@ final class DragController {
 
     private func handle(_ event: NSEvent) {
         let gesture = gestureEvent(from: event)
+        let time = event.timestamp
         let effects = machine.handle(gesture)
+        let dismissed = effects.contains { effect in
+            if case .dismissWheel = effect { return true }
+            return false
+        }
         for effect in effects {
             switch effect {
             case let .showWheel(kind, point, session):
-                onShowWheel?(kind, point, session)
+                onShowWheel?(kind, point, session, time)
             case let .switchWheel(kind, session):
-                onSwitchWheel?(kind, session)
+                onSwitchWheel?(kind, session, time)
             case .dismissWheel:
-                onDismissWheel?()
+                onDismissWheel?(cause(for: gesture))
             case .dragEnded:
                 fileDragOrigin = nil
                 onDragEnded?()
@@ -88,9 +122,30 @@ final class DragController {
                 onWheelKey?(key)
             case let .dragBegan(session):
                 fileDragOrigin = session.location
+                onDragBegan?(session)
             case let .idleTap(kind):
-                onIdleTap?(kind)
+                onIdleTap?(kind, time)
+            case .prefetchAnchor:
+                onPrefetchAnchor?()
             }
+        }
+        if event.type == .leftMouseUp, !dismissed {
+            onUnguardedMouseUp?()
+        }
+    }
+
+    private func cause(for event: GestureEvent) -> GestureDismissCause {
+        switch event {
+        case .mouseDown:
+            return .mouseDown
+        case .mouseUp:
+            return .mouseUp
+        case .dropAccepted:
+            return .dropAccepted
+        case .keyDown(_, let key) where key == .escape:
+            return .escape
+        default:
+            return .mouseUp
         }
     }
 
